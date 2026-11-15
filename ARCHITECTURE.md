@@ -5,6 +5,16 @@
 
 本文使用目录树说明架构和文件职责。覆盖业务 Go 源码及测试、`web/src`、数据库 schema、构建/部署配置和 Skills；依赖、构建产物、缓存和 `third_party/` 内部源码不逐文件展开。
 
+## 0. Defense profile（2026-11-15 新增）
+
+- `defense/`：本地仓库只读评估、finding 规范化、diff-only patch、独立容器验证和 remediation bundle。
+- `cmd/artex-defense/`：独立 default-deny CLI，不装配 legacy shell、MCP 或 offensive agent 工具链。
+- `server/defense.go`：使用现有 JWT 的 defense session、导出和人工审批 API。
+- `web/src/app/(main)/function/defense/page.tsx`：finding、diff、验证日志、报告与人工审批界面。
+- `docs/ARTEX-DEFENSE.md`：准确的状态机、容器边界、API 和 rollback 合约。
+
+Defense 的输出目录必须位于被审仓库之外。验证只写临时 checkout，完成后删除；验证通过和人工批准都不会自动 commit、push、merge 或 deploy。
+
 ## 1. 运行时架构树
 
 ```text

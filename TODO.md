@@ -268,55 +268,55 @@ Requirements:
 
 ### Phase 0 — Baseline and policy harness
 
-- [ ] Add a `defense` execution profile distinct from offensive profiles.
-- [ ] Add configuration for repository root, allowed paths, resource limits, network policy, and validation policy.
-- [ ] Implement a policy harness that rejects general shell commands and out-of-scope paths.
-- [ ] Add tests for path traversal, symlink escape, secret redaction, command denial, and timeout handling.
-- [ ] Document the exact `DefenseTask` lifecycle and status transitions.
+- [x] Add a `defense` execution profile distinct from offensive profiles.
+- [x] Add configuration for repository root, allowed paths, resource limits, network policy, and validation policy.
+- [x] Implement a policy harness that rejects general shell commands and out-of-scope paths.
+- [x] Add tests for path traversal, symlink escape, secret redaction, command denial, and timeout handling.
+- [x] Document the exact `DefenseTask` lifecycle and status transitions.
 
 Acceptance: an empty task can be created and rejected safely when its repository or policy is invalid.
 
 ### Phase 1 — Read-only audit and finding normalization
 
-- [ ] Implement repository listing, reading, searching, and manifest inspection.
-- [ ] Implement dependency scanning for Go and npm first.
-- [ ] Add configuration and secret scanning with explicit rule definitions.
-- [ ] Normalize findings into `DefenseFinding`.
-- [ ] Add stable fingerprints and deduplication.
-- [ ] Add reachability/patchability assessment and `needs_review` handling.
-- [ ] Add a read-only API endpoint or CLI that returns findings without modifying the repository.
+- [x] Implement repository listing, reading, searching, and manifest inspection.
+- [x] Implement dependency scanning for Go and npm first.
+- [x] Add configuration and secret scanning with explicit rule definitions.
+- [x] Normalize findings into `DefenseFinding`.
+- [x] Add stable fingerprints and deduplication.
+- [x] Add reachability/patchability assessment and `needs_review` handling.
+- [x] Add a read-only API endpoint or CLI that returns findings without modifying the repository.
 
 Acceptance: running against the fixture produces reproducible findings with evidence, not just prose.
 
 ### Phase 2 — Patch generation
 
-- [ ] Implement `PatchProposal` creation and unified-diff output.
-- [ ] Add path and patch-size constraints.
-- [ ] Add regression-test generation for supported project types.
-- [ ] Preserve APIs and avoid unrelated formatting/lockfile churn.
-- [ ] Add rejection paths for unsupported or uncertain findings.
+- [x] Implement `PatchProposal` creation and unified-diff output.
+- [x] Add path and patch-size constraints.
+- [x] Add regression-test generation for supported project types.
+- [x] Preserve APIs and avoid unrelated formatting/lockfile churn.
+- [x] Add rejection paths for unsupported or uncertain findings.
 
 Acceptance: the prototype-pollution fixture receives a minimal patch and regression test without any in-place source mutation.
 
 ### Phase 3 — Independent validation
 
-- [ ] Implement clean-checkout creation and patch application.
-- [ ] Implement non-root, resource-limited validation containers.
-- [ ] Add command plans for Go and Node projects.
-- [ ] Run regression tests, existing tests, builds, and configured scanners.
-- [ ] Run the new test against the unpatched baseline when practical.
-- [ ] Return machine-readable `ValidationRun` results and artifacts.
-- [ ] Destroy temporary resources on every exit path.
+- [x] Implement clean-checkout creation and patch application.
+- [x] Implement non-root, resource-limited validation containers.
+- [x] Add command plans for Go and Node projects.
+- [x] Run regression tests, existing tests, builds, and configured scanners.
+- [x] Run the new test against the unpatched baseline when practical.
+- [x] Return machine-readable `ValidationRun` results and artifacts.
+- [x] Destroy temporary resources on every exit path.
 
 Acceptance: a deliberately broken patch is rejected with logs, while the correct patch passes with complete evidence.
 
 ### Phase 4 — Reporting and review UX
 
-- [ ] Generate remediation reports with rationale, evidence, risk, validation, and rollback.
-- [ ] Add a defense finding detail view and patch diff view.
-- [ ] Add validation status and command output.
-- [ ] Add explicit `needs_review`, `validated`, and `rejected` states.
-- [ ] Provide a PR-ready export; do not push it automatically.
+- [x] Generate remediation reports with rationale, evidence, risk, validation, and rollback.
+- [x] Add a defense finding detail view and patch diff view.
+- [x] Add validation status and command output.
+- [x] Add explicit `needs_review`, `validated`, and `rejected` states.
+- [x] Provide a PR-ready export; do not push it automatically.
 
 Acceptance: a reviewer can understand and test the patch without reading model reasoning or hidden state.
 
@@ -380,6 +380,13 @@ cd .. && docker build -f Dockerfile.source -t artex-defense:review .
 
 Integration tests requiring PostgreSQL must use a temporary, isolated database, never a development or production DSN.
 
+### MVP verification note (2026-11-15)
+
+- The prototype-pollution fixture passed in a real non-root, network-disabled container with baseline regression failure, patched regression/existing-test success, build success, and offline scanner success.
+- Broken-patch, missing-coverage, uncertain-finding, cleanup, source-immutability, API-authentication, and human-approval checks passed.
+- Frontend lint/TypeScript/build/static-build, npm audits, API-recon checks, `govulncheck`, and the hardened source image build passed. The image contains a working `artex-defense` CLI.
+- The full Go suite passes except for the pre-existing timing-sensitive `TestPreAgentConversationManualRerunRecoverableStates`; it fails in the shared legacy server suite and passes in isolation, matching the baseline caveat below. Its isolated pass does not make the aggregate suite green, so the aggregate verification checkbox remains unchecked.
+
 ## Guardrails for the implementation agent
 
 - Work in small, reviewable commits.
@@ -408,15 +415,15 @@ Integration tests requiring PostgreSQL must use a temporary, isolated database, 
 
 ## Definition of done for MVP
 
-- [ ] All non-negotiable boundaries hold.
-- [ ] The fixture succeeds end-to-end with a minimal patch and regression test.
-- [ ] Broken and uncertain patches are rejected safely.
-- [ ] Validation uses actual build/test/scanner output, not model assertions.
-- [ ] No source working-tree changes occur during audit or validation.
-- [ ] No network writes, auto-commits, auto-merges, or deployments occur.
-- [ ] Documentation and UI clearly distinguish evidence from assumptions.
+- [x] All non-negotiable boundaries hold.
+- [x] The fixture succeeds end-to-end with a minimal patch and regression test.
+- [x] Broken and uncertain patches are rejected safely.
+- [x] Validation uses actual build/test/scanner output, not model assertions.
+- [x] No source working-tree changes occur during audit or validation.
+- [x] No network writes, auto-commits, auto-merges, or deployments occur.
+- [x] Documentation and UI clearly distinguish evidence from assumptions.
 - [ ] Go tests, frontend builds, npm audits, Go vulnerability checks, and the hardened Docker build pass.
-- [ ] A human reviewer can take the generated diff and apply it confidently.
+- [x] A human reviewer can take the generated diff and apply it confidently.
 
 ## Existing baseline caveats
 
