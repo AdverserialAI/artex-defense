@@ -1,5 +1,5 @@
 // Package config loads runtime configuration from a JSON file, with environment
-// variables taking precedence. Currently it carries the PostgreSQL connection.
+// variables taking precedence for database and skill settings.
 package config
 
 import (
@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"artex/defense"
 )
 
 // Database is the PostgreSQL connection config. Either set DSN directly, or set
@@ -26,8 +28,9 @@ type Database struct {
 
 // Config is the on-disk config file shape.
 type Config struct {
-	Database Database `json:"database"`
-	SkillDir string   `json:"skill_dir"`
+	Database Database             `json:"database"`
+	SkillDir string               `json:"skill_dir"`
+	Defense  *defense.DefenseTask `json:"defense,omitempty"`
 }
 
 // BaseDir is the directory that anchors all runtime artifacts (config.json and

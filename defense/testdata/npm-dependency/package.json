@@ -1,0 +1,8 @@
+{
+  "name": "npm-dependency-fixture",
+  "version": "1.0.0",
+  "private": true,
+  "dependencies": {
+    "example-vulnerable-package": "1.0.0"
+  }
+}

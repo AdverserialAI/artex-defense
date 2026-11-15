@@ -19,5 +19,23 @@
   },
 
   "_comment_skill_dir": "skill 根目录（每个子目录一个 skill，含 SKILL.md）。优先级：环境变量 ARTEX_SKILL_DIR > 本字段 > 默认（可执行文件同级的 skills/）。留空或删除本字段即用默认。相对路径相对当前工作目录解析。",
-  "skill_dir": "/opt/artex/skills"
+  "skill_dir": "/opt/artex/skills",
+
+  "_comment_defense": "可选：artex-defense CLI 的默认任务。profile 必须为 defense；写路径只约束 diff，绝不允许原地修改。网络默认关闭。完整字段见 README.md。",
+  "_example_defense": {
+    "defense": {
+      "schema_version": "defense.artex/v1",
+      "id": "local-repository-review",
+      "profile": "defense",
+      "repository_root": "/absolute/path/to/repository",
+      "allowed_read_paths": ["."],
+      "allowed_write_paths": ["merge.js", "merge.regression.test.js"],
+      "validation": {
+        "image": "node:22-bookworm",
+        "network_allowed": false,
+        "require_baseline_failure": true,
+        "command_allowlist": ["node", "npm"]
+      }
+    }
+  }
 }
