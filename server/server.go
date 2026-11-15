@@ -31,6 +31,7 @@ import (
 
 	"artex/agent"
 	"artex/db"
+	"artex/defense"
 	"artex/intercept"
 	"artex/llmpool"
 	"artex/llmrec"
@@ -55,7 +56,12 @@ type Server struct {
 	ctx    context.Context
 
 	skillDir string // root directory for skill subdirectories
+	dataDir  string
 	jwtKey   []byte // HS256 signing key loaded from / generated into dataDir/jwt.key
+
+	defenseMu       sync.Mutex
+	defenseSessions map[string]defenseSession
+	defenseExecutor defense.Executor
 
 	// concMu serializes concurrency-cap decisions (admission + reconcile) so a
 	// scheduler tick and an HTTP settings change / task creation can't both count
@@ -166,7 +172,7 @@ func New(ctx context.Context, m *Manager, skillDir string, dataDir string, keyDi
 	if err != nil {
 		log.Fatalf("[auth] JWT key: %v", err)
 	}
-	s := &Server{m: m, engine: NewEngine(m), ctx: ctx, skillDir: skillDir, jwtKey: key, chatBusy: map[string]bool{},
+	s := &Server{m: m, engine: NewEngine(m), ctx: ctx, skillDir: skillDir, dataDir: dataDir, jwtKey: key, defenseSessions: map[string]defenseSession{}, chatBusy: map[string]bool{},
 		chatCancel: map[string]context.CancelCauseFunc{}, triggerQ: map[string][]triggeredRun{},
 		triggerActive: map[string]int{}, triggerCfg: map[string]triggerBehavior{},
 		profChatAgents: map[int64]*agent.ChatAgent{},
@@ -729,6 +735,11 @@ func (s *Server) Handler() http.Handler {
 
 	mux.HandleFunc("GET /api/health", s.health)
 	mux.HandleFunc("GET /api/stats", s.stats)
+	mux.HandleFunc("GET /api/defense/tasks", s.defenseList)
+	mux.HandleFunc("POST /api/defense/tasks", s.defenseCreate)
+	mux.HandleFunc("GET /api/defense/tasks/{id}", s.defenseGet)
+	mux.HandleFunc("POST /api/defense/tasks/{id}/approve", s.defenseApprove)
+	mux.HandleFunc("GET /api/defense/tasks/{id}/export", s.defenseExport)
 	mux.HandleFunc("GET /api/logs", s.getLogs)
 	mux.HandleFunc("GET /api/logs/history", s.getLogsHistory)
 	mux.HandleFunc("GET /api/logs/stream", s.streamLogs)

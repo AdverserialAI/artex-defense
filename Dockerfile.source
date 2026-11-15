@@ -23,7 +23,9 @@ COPY . .
 COPY --from=web-builder /src/web/out ./server/webui/dist
 RUN CGO_ENABLED=0 go build -tags embedui -trimpath \
       -ldflags "-s -w -buildid= -X main.version=${ARTEX_VERSION}" \
-      -o /out/artex ./cmd/artex
+      -o /out/artex ./cmd/artex \
+    && CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -buildid=" \
+      -o /out/artex-defense ./cmd/artex-defense
 
 # 运行层与根目录 Dockerfile 保持一致，仅把预编译 COPY 改为 builder 产物。
 FROM python:3.12-slim-bookworm@sha256:935c3c5b12357a7e10caa9c1e6ca5692344d97cf229832ef584be2cec9fc03df
@@ -46,6 +48,7 @@ RUN npm install -g @playwright/mcp@0.0.85 @playwright/cli@0.1.24 playwright@1.65
 
 WORKDIR /app
 COPY --from=go-builder /out/artex /app/artex
+COPY --from=go-builder /out/artex-defense /app/artex-defense
 COPY start.sh /app/start.sh
 # start.sh 启动时即 source 配置迁移函数；upgrade-prompts 也依赖同目录 SQL。
 COPY scripts/artex-config.sh scripts/upgrade-review-flow-prompts.sql /app/scripts/
@@ -55,7 +58,7 @@ COPY scripts/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 
 # JWT 签名密钥落到持久化数据卷，容器重建后旧登录 token 仍有效。
 RUN ln -sf /app/data/jwt.key /app/jwt.key \
-    && chmod +x /app/artex /app/start.sh /usr/local/bin/docker-entrypoint.sh \
+    && chmod +x /app/artex /app/artex-defense /app/start.sh /usr/local/bin/docker-entrypoint.sh \
     && mkdir -p /app/data /home/artex \
     && chown -R ${ARTEX_UID}:${ARTEX_GID} /app/data /app/skills /home/artex \
     && chmod -R a+rX /app /opt/playwright

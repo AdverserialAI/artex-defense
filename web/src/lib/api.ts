@@ -6,6 +6,7 @@
  *   - http / sseUrl: re-exported low-level request client and SSE URL construction
  */
 
+import { type DefenseApi, defenseApi } from "@/lib/api/defense";
 import { http, sseUrl } from "@/lib/api/http";
 import { type InterceptApi, interceptApi } from "@/lib/api/intercept";
 import { type LlmAgentsApi, llmAgentsApi } from "@/lib/api/llm-agents";
@@ -17,7 +18,8 @@ export const api = {
   ...llmAgentsApi,
   ...interceptApi,
   ...miscApi,
-} satisfies TasksApi & LlmAgentsApi & InterceptApi & MiscApi;
+  ...defenseApi,
+} satisfies TasksApi & LlmAgentsApi & InterceptApi & MiscApi & DefenseApi;
 
 export type Api = typeof api;
 
@@ -302,6 +304,11 @@ const API_KEYS = [
   "llmTasks",
   "llmRecordsDeleteTask",
   "tokensByModel",
+  "defenseTasks",
+  "defenseTask",
+  "createDefenseTask",
+  "approveDefenseTask",
+  "downloadDefenseArtifact",
 ] as const satisfies readonly (keyof typeof api)[];
 type ExpectNever<T extends never> = T;
 type _AllApiKeysDocumented = ExpectNever<Exclude<keyof typeof api, (typeof API_KEYS)[number]>>;
