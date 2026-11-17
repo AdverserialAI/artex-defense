@@ -1,0 +1,127 @@
+# Builds, signs and publishes one ARTEX Attack release image.
+#
+# A release is a version tag on master, for example v0.1.6. Nothing else triggers this:
+# not a branch push, not a pull request, not a manual run. The image is pushed by digest to
+# the registry hosted agents pull from, signed without any stored key (the signature is tied
+# to this workflow at this tag), and its digest is published in the GitHub release so anyone
+# can compare it with what an agent's hardware evidence reports.
+#
+# There are no secrets in this repository for this job. It proves who it is to Google Cloud
+# with a short-lived GitHub token that Google accepts only for this repository, this
+# workflow file and a version tag.
+name: release
+
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+
+permissions: {}
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  IMAGE: us-central1-docker.pkg.dev/adverserial-ack-poc/agents/artex
+  VERIFIER_URL: https://verify.adverserial.ai/verify
+  WORKLOAD_IDENTITY_PROVIDER: projects/711745269151/locations/global/workloadIdentityPools/github-releases/providers/artex-attack
+  PUBLISHER: artex-release-publisher@adverserial-ack-poc.iam.gserviceaccount.com
+
+jobs:
+  image:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: write   # to create the GitHub release
+      id-token: write   # to sign without a key and to sign in to Google Cloud without a secret
+    steps:
+      - name: Check out the tagged commit
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Refuse a tag that is not on master
+        run: |
+          git fetch --no-tags origin master
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/master || {
+            echo "::error::$GITHUB_REF_NAME points at a commit that is not on master"; exit 1; }
+          test -z "$(git status --porcelain)"
+
+      - name: Sign in to Google Cloud without a secret
+        id: google
+        uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed # v2.1.13
+        with:
+          workload_identity_provider: ${{ env.WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.PUBLISHER }}
+          token_format: access_token
+          access_token_lifetime: 1800s
+
+      - name: Sign in to the image registry
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        with:
+          registry: us-central1-docker.pkg.dev
+          username: oauth2accesstoken
+          password: ${{ steps.google.outputs.access_token }}
+
+      - name: Set up the builder
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+
+      - name: Build and push
+        id: build
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+        with:
+          context: .
+          file: Dockerfile.source
+          platforms: linux/amd64
+          push: true
+          sbom: true
+          provenance: mode=max
+          build-args: |
+            NEXT_PUBLIC_DSTACK_VERIFIER_URL=${{ env.VERIFIER_URL }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ github.ref_name }}
+          tags: |
+            ${{ env.IMAGE }}:${{ github.ref_name }}
+            ${{ env.IMAGE }}:git-${{ github.sha }}
+
+      - name: Install the signing tool
+        uses: sigstore/cosign-installer@7e8b541eb2e61bf99390e1afd4be13a184e9ebc5 # v3.10.1
+
+      - name: Sign the image by digest
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+          cosign sign --yes "$IMAGE@$DIGEST"
+
+      - name: Publish the release with its digest
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          cat > notes.md <<NOTES
+          ## Image
+
+          \`$IMAGE@$DIGEST\`
+
+          | | |
+          | --- | --- |
+          | Commit | \`$GITHUB_SHA\` |
+          | Digest | \`$DIGEST\` |
+
+          ## Verify it
+
+          \`\`\`bash
+          cosign verify "$IMAGE@$DIGEST" \\
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \\
+            --certificate-identity "https://github.com/$GITHUB_REPOSITORY/.github/workflows/release.yml@$GITHUB_REF"
+          \`\`\`
+
+          A hosted agent runs this release if the application measurement in its hardware evidence
+          was computed from a configuration that names this digest.
+          NOTES
+          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --title "ARTEX Attack $GITHUB_REF_NAME" --notes-file notes.md --verify-tag
