@@ -1821,6 +1821,10 @@ func (s *Server) pgListProfiles(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) pgSaveProfile(w http.ResponseWriter, r *http.Request) {
+	if os.Getenv("ARTEX_LLM_BOOTSTRAP_FILE") != "" {
+		writeErr(w, http.StatusLocked, "LLM configuration is sealed by the confidential runtime")
+		return
+	}
 	pg := s.pg(w)
 	if pg == nil {
 		return

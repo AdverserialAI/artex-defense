@@ -18,12 +18,14 @@ package agent
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -151,6 +153,32 @@ func compactionConfig(windowTokens int) *compaction.Config {
 //	ARTEX_LLM_PROXY    = proxy URL        (optional; http/https/socks5)
 //	ANTHROPIC_API_KEY / OPENAI_API_KEY         = credentials
 func FromEnv() (Config, bool) {
+	configs, ok := ConfigsFromEnv()
+	if !ok || len(configs) == 0 {
+		return Config{}, false
+	}
+	return configs[0], true
+}
+
+// ConfigsFromEnv returns the strict measured-runtime provider chain, or the
+// ordinary single environment provider outside the SaaS runtime. A configured
+// bootstrap always fails closed and never falls back to process environment.
+func ConfigsFromEnv() ([]Config, bool) {
+	if bootstrap := strings.TrimSpace(os.Getenv("ARTEX_LLM_BOOTSTRAP_FILE")); bootstrap != "" {
+		configs, err := configsFromBootstrap(bootstrap)
+		if err != nil {
+			return nil, false
+		}
+		return configs, true
+	}
+	cfg, ok := configFromEnvironment()
+	if !ok {
+		return nil, false
+	}
+	return []Config{cfg}, true
+}
+
+func configFromEnvironment() (Config, bool) {
 	prov := os.Getenv("ARTEX_LLM_PROVIDER")
 	anthKey := os.Getenv("ANTHROPIC_API_KEY")
 	oaiKey := os.Getenv("OPENAI_API_KEY")
@@ -197,6 +225,121 @@ func FromEnv() (Config, bool) {
 		return Config{}, false
 	}
 	return c, true
+}
+
+type bootstrapConfig struct {
+	Provider   string `json:"provider"`
+	Model      string `json:"model,omitempty"`
+	BaseURL    string `json:"base_url,omitempty"`
+	APIKeyFile string `json:"api_key_file"`
+	Transport  string `json:"transport,omitempty"`
+}
+
+type bootstrapDocument struct {
+	Version   int               `json:"version"`
+	Providers []bootstrapConfig `json:"providers"`
+}
+
+var runtimeSecretRoot = "/run/adverserial/current"
+
+const runtimeBootstrapProxy = "http://llm-egress-proxy:8080"
+const attestedGatewayBaseURL = "http://attested-inference-gateway:8787/v1"
+
+// configsFromBootstrap reads a guard-authored provider chain and its separate
+// key files. The measured runtime mounts this tree read-only. Key bytes never
+// enter Docker environment metadata or the ARTEX database.
+func configsFromBootstrap(path string) ([]Config, error) {
+	document, err := readRuntimeSecret(path, 8192)
+	if err != nil {
+		return nil, err
+	}
+	decoder := json.NewDecoder(bytes.NewReader(document))
+	decoder.DisallowUnknownFields()
+	var boot bootstrapDocument
+	if err := decoder.Decode(&boot); err != nil || boot.Version != 1 || len(boot.Providers) == 0 || len(boot.Providers) > 2 {
+		return nil, fmt.Errorf("invalid LLM bootstrap")
+	}
+	if decoder.Decode(&struct{}{}) != io.EOF {
+		return nil, fmt.Errorf("invalid LLM bootstrap")
+	}
+	configs := make([]Config, 0, len(boot.Providers))
+	seen := make(map[string]bool, len(boot.Providers))
+	for _, provider := range boot.Providers {
+		if provider.Provider != "anthropic" && provider.Provider != "openai" && provider.Provider != "openai-responses" {
+			return nil, fmt.Errorf("unsupported LLM bootstrap provider")
+		}
+		if seen[provider.Provider] {
+			return nil, fmt.Errorf("duplicate LLM bootstrap provider")
+		}
+		seen[provider.Provider] = true
+		proxy := runtimeBootstrapProxy
+		if provider.Transport == "attested-gateway" {
+			if provider.Provider != "openai" || provider.Model != "adverserial/cyberseek" || provider.BaseURL != attestedGatewayBaseURL {
+				return nil, fmt.Errorf("invalid attested inference gateway bootstrap")
+			}
+			proxy = ""
+		} else if provider.Transport != "" {
+			return nil, fmt.Errorf("unsupported LLM bootstrap transport")
+		} else if provider.Model == "adverserial/cyberseek" {
+			return nil, fmt.Errorf("CyberSEEK requires the attested inference gateway")
+		}
+		if provider.BaseURL != "" && provider.Transport != "attested-gateway" {
+			parsed, err := url.Parse(provider.BaseURL)
+			if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
+				return nil, fmt.Errorf("LLM bootstrap requires a verified HTTPS endpoint")
+			}
+			expectedHost := "api.anthropic.com"
+			if provider.Provider == "openai" || provider.Provider == "openai-responses" {
+				expectedHost = "api.openai.com"
+			}
+			if parsed.Hostname() != expectedHost || (parsed.Port() != "" && parsed.Port() != "443") {
+				return nil, fmt.Errorf("LLM bootstrap endpoint is not approved for provider")
+			}
+		}
+		key, err := readRuntimeSecret(provider.APIKeyFile, 4096)
+		if err != nil {
+			return nil, err
+		}
+		apiKey := string(key)
+		if strings.TrimSpace(apiKey) != apiKey || len(apiKey) < 20 || len(apiKey) > 2048 || strings.IndexFunc(apiKey, func(r rune) bool { return r < 0x20 || r == 0x7f }) >= 0 {
+			return nil, fmt.Errorf("invalid runtime LLM credential")
+		}
+		configs = append(configs, ConfigFrom(provider.Provider, provider.Model, provider.BaseURL, apiKey, proxy))
+	}
+	// The measured SaaS runtime keeps ARTEX off every Internet-routed Docker
+	// network. BYOK traffic can leave only through the sibling CONNECT proxy;
+	// CyberSEEK reaches only the internal ACK-compatible attested gateway.
+	return configs, nil
+}
+
+func readRuntimeSecret(path string, maximum int64) ([]byte, error) {
+	root := runtimeSecretRoot
+	clean := filepath.Clean(path)
+	if !filepath.IsAbs(clean) || (clean != root && !strings.HasPrefix(clean, root+string(os.PathSeparator))) {
+		return nil, fmt.Errorf("runtime secret path rejected")
+	}
+	resolvedRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return nil, fmt.Errorf("runtime secret root unavailable")
+	}
+	resolved, err := filepath.EvalSymlinks(clean)
+	if err != nil || (resolved != resolvedRoot && !strings.HasPrefix(resolved, resolvedRoot+string(os.PathSeparator))) {
+		return nil, fmt.Errorf("runtime secret path rejected")
+	}
+	file, err := os.Open(resolved)
+	if err != nil {
+		return nil, fmt.Errorf("runtime secret unavailable")
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0o077 != 0 || info.Size() <= 0 || info.Size() > maximum {
+		return nil, fmt.Errorf("runtime secret metadata rejected")
+	}
+	data, err := io.ReadAll(io.LimitReader(file, maximum+1))
+	if err != nil || int64(len(data)) > maximum {
+		return nil, fmt.Errorf("runtime secret read rejected")
+	}
+	return data, nil
 }
 
 // ConfigFrom builds a Config from UI-provided strings (provider defaults to

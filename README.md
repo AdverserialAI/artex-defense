@@ -134,6 +134,14 @@ cd ../../.. && docker build -f Dockerfile.source -t artex-defense:review .
 
 Integration tests requiring PostgreSQL must use a temporary isolated database, never a development or production DSN.
 
+## Confidential hosted model access
+
+Hosted confidential-VM deployments can provision model access through a measured,
+fail-closed bootstrap. ARTEX Defense reads only a local capability for the fixed
+in-VM model proxy; the proxy holds and injects the provider API key. The application
+therefore can use the configured model without being able to read or redirect the
+provider credential. See [Confidential SaaS LLM](docs/CONFIDENTIAL-SaaS-LLM.md).
+
 ## License
 
 [AGPL v3](LICENSE), following the upstream ARTEX license. Third-party component obligations remain unchanged.

@@ -312,8 +312,20 @@ func New(ctx context.Context, m *Manager, skillDir string, dataDir string, keyDi
 			xlog.SetLevel(v)
 		}
 	}
-	// precedence: persisted DB config > env.
-	if cfg, ok := s.loadLLMConfig(); ok {
+	// A measured-runtime bootstrap is guard-authored and takes precedence over
+	// mutable database profiles. This keeps SaaS credentials out of PostgreSQL
+	// and prevents a stale profile from overriding the attested deployment.
+	if os.Getenv("ARTEX_LLM_BOOTSTRAP_FILE") != "" {
+		if configs, ok := agent.ConfigsFromEnv(); ok {
+			if err := s.applyRuntimeLLMs(configs); err != nil {
+				log.Printf("[engine] runtime LLM bootstrap init failed — engine idle: %v", err)
+			} else {
+				log.Printf("[engine] %d LLM provider(s) configured from measured runtime bootstrap", len(configs))
+			}
+		} else {
+			log.Printf("[engine] runtime LLM bootstrap rejected — engine idle")
+		}
+	} else if cfg, ok := s.loadLLMConfig(); ok {
 		if err := s.applyLLM(cfg); err != nil {
 			log.Printf("[engine] saved LLM config init failed — engine idle: %v", err)
 		} else {
@@ -545,15 +557,60 @@ func (s *Server) applyLLM(cfg agent.Config) error {
 		prov = llmrec.Wrap(prov, s.m.PG(), cfg.Model, profName, cfg.ThinkingType, cfg.ReasoningEffort, s.m.LLMRecordEnabled)
 		prov = bindSideProvider(prov, cfg, 0, profName)
 	}
-	s.cfgMu.Lock()
-	s.llmDirect = prov
-	s.cfgMu.Unlock()
+	direct := prov
 	// LLM 轮询(默认关):把激活配置包进故障转移链,当前配置不可用时自动切下一个。
 	// 只影响「走全局激活配置」的这条路径——agent 绑定 / 任务 pin 的走 providerForProfile,
 	// 默认仍然独占该配置(见 poolForBinding)。关闭或无备选时返回原 provider,行为不变。
 	if act, err := s.m.pg.ActiveProfile(); err == nil && act != nil {
 		prov = s.poolForActive(act.ID, prov, cfg)
 	}
+	return s.installLLM(cfg, direct, prov)
+}
+
+// applyRuntimeLLMs installs the guard-authored provider chain without creating
+// llm_profiles rows. The first provider is primary; later providers are tried
+// only when the pool can fail over before emitting any response event.
+func (s *Server) applyRuntimeLLMs(configs []agent.Config) error {
+	if len(configs) == 0 || len(configs) > 2 {
+		return fmt.Errorf("invalid measured-runtime provider chain")
+	}
+	members := make([]*llmpool.Member, 0, len(configs))
+	minimumWindow := 0
+	for index, cfg := range configs {
+		prov, err := cfg.NewProvider()
+		if err != nil {
+			return err
+		}
+		name := "runtime-" + cfg.Provider()
+		prov = llmrec.Wrap(prov, s.m.PG(), cfg.Model, name, cfg.ThinkingType, cfg.ReasoningEffort, s.m.LLMRecordEnabled)
+		prov = bindSideProvider(prov, cfg, -int64(index+1), name)
+		rank := -index
+		if index == 0 {
+			rank = llmpool.RankActive
+		}
+		window := cfg.CompactionWindow()
+		if minimumWindow == 0 || window < minimumWindow {
+			minimumWindow = window
+		}
+		members = append(members, &llmpool.Member{
+			ID: -int64(index + 1), Name: name, Model: cfg.Model,
+			Format: cfg.Provider(), Rank: rank, WindowTokens: window, Prov: prov,
+		})
+	}
+	primary := configs[0]
+	primary.ContextWindowK = minimumWindow / 1000
+	direct := members[0].Prov
+	provider := direct
+	if len(members) > 1 {
+		provider = llmpool.New(members, nil)
+	}
+	return s.installLLM(primary, direct, provider)
+}
+
+func (s *Server) installLLM(cfg agent.Config, direct, prov llm.Provider) error {
+	s.cfgMu.Lock()
+	s.llmDirect = direct
+	s.cfgMu.Unlock()
 	// No global planner/worker pair: every task runs on its own task-routed pair
 	// (agentsForTask), resolved through the engine's authoritative resolver. Global
 	// readiness (Ready()/llm_configured) is reported from s.llmOn, set below.
@@ -585,6 +642,9 @@ func (s *Server) applyLLM(cfg agent.Config) error {
 // loadProfileConfig builds an agent.Config from a specific profile id (with its key).
 // ok=false when the profile is missing or has no api key.
 func (s *Server) loadProfileConfig(id int64) (agent.Config, bool) {
+	if os.Getenv("ARTEX_LLM_BOOTSTRAP_FILE") != "" {
+		return agent.Config{}, false
+	}
 	p, err := s.m.pg.ProfileByID(id)
 	if err != nil || p == nil {
 		return agent.Config{}, false
@@ -598,6 +658,9 @@ func (s *Server) loadProfileConfig(id int64) (agent.Config, bool) {
 // can't happen (FK ON DELETE SET NULL); an otherwise-invalid one is dropped downstream
 // by loadProfileConfig, letting the caller fall back.
 func (s *Server) effectiveProfileForAgent(agentKey string, pinID *int64) *int64 {
+	if os.Getenv("ARTEX_LLM_BOOTSTRAP_FILE") != "" {
+		return nil
+	}
 	if s.m.pg != nil && agentKey != "" {
 		if a, _ := s.m.pg.GetAgentByKey(agentKey); a != nil && a.LLMProfileID != nil {
 			return a.LLMProfileID
@@ -1436,6 +1499,10 @@ func (s *Server) getLLM(w http.ResponseWriter, r *http.Request) {
 
 // setLLM configures the LLM at runtime. A blank api_key keeps the existing key.
 func (s *Server) setLLM(w http.ResponseWriter, r *http.Request) {
+	if os.Getenv("ARTEX_LLM_BOOTSTRAP_FILE") != "" {
+		writeErr(w, http.StatusLocked, "LLM configuration is sealed by the confidential runtime")
+		return
+	}
 	var req struct {
 		Provider        string  `json:"provider"`
 		Model           string  `json:"model"`

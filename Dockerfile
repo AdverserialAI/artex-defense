@@ -12,7 +12,9 @@
 FROM node:22-bookworm@sha256:e13726ca604184d7a91fcacab1fc09eefd642dc28e79ac34e85540dd93b78cfb AS node-runtime
 FROM python:3.12-slim-bookworm@sha256:935c3c5b12357a7e10caa9c1e6ca5692344d97cf229832ef584be2cec9fc03df
 ARG TARGETARCH
-ARG ARTEX_UID=10001 ARTEX_GID=10001
+# 65532 is the fixed non-root user hosted deployments start this image as; the entrypoint
+# also drops to it when the container is started as root (self-hosting).
+ARG ARTEX_UID=65532 ARTEX_GID=65532
 ENV PLAYWRIGHT_BROWSERS_PATH=/opt/playwright
 RUN groupadd --gid ${ARTEX_GID} artex \
     && useradd --uid ${ARTEX_UID} --gid ${ARTEX_GID} --home-dir /home/artex --create-home --shell /usr/sbin/nologin artex
@@ -50,6 +52,7 @@ RUN ln -sf /app/data/jwt.key /app/jwt.key \
     && mkdir -p /app/data /home/artex \
     && chown -R ${ARTEX_UID}:${ARTEX_GID} /app/data /app/skills /home/artex \
     && chmod -R a+rX /app /opt/playwright
+ENV HOME=/home/artex
 # data/（SQLite + jwt.key）持久化点
 VOLUME ["/app/data"]
 EXPOSE 8787 8788
