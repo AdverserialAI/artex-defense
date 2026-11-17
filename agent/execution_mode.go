@@ -50,7 +50,7 @@ func ExecutionModeFromGoal(text string) ExecutionMode {
 		"只做漏洞验证", "仅做漏洞验证", "只确认漏洞", "仅确认漏洞",
 		"不需要getshell", "无需getshell", "不要getshell",
 		"不需要shell", "无需shell", "不要shell", "不建立shell",
-		"vulnerabilityonly", "vulnerabilityvalidationonly", "poconly",
+		"[executionmode:vulnerabilityonly]", "vulnerabilityonly", "vulnerabilityvalidationonly", "poconly",
 		"proofofconceptonly", "noshellrequired", "donotestablishshell",
 	} {
 		if strings.Contains(normalized, marker) {
@@ -72,11 +72,11 @@ func goalExecutionModeSpec(goal, description string) string {
 // templates do not need to duplicate this contract.
 const GoalVulnerabilityOnlySpec = `
 
-**执行模式：仅漏洞路径（已识别，最高优先级语义约束）**
-- 本任务只要求确认、复现或解释用户指定漏洞及其边界；不要添加 getshell、WebShell、C2、持久化、内网移动或主机控制目标。
-- 按实际漏洞类型设置可核验的完成条件：RCE 需要真实命令/代码执行证据；文件上传需要落地及访问/解析证据；其他漏洞按对应可复现证据验收。
-- RCE、文件上传、反序列化或权限提升本身就是本模式的合法最终结果，不得升级为必须建立立足点。
-- 只有用户同时明确要求 Shell/立足点时才退出本模式；当前识别结果表示没有这种要求。`
+**Execution mode: vulnerability only (identified; highest-priority semantic constraint)**
+- This task requires only confirmation, reproduction, or explanation of the specified vulnerability and its boundaries. Do not add getshell, WebShell, C2, persistence, internal movement, or host-control goals.
+- Use verifiable acceptance evidence appropriate to the type: actual command/code execution for RCE, stored/accessed/parsed file evidence for upload, and corresponding reproducible evidence for other vulnerabilities.
+- RCE, file upload, deserialization, and privilege escalation can themselves be valid final outcomes; do not require a foothold.
+- Leave this mode only if the user also explicitly requires a Shell/foothold. The current classification indicates no such requirement.`
 
 // plannerExecutionModeSpec returns the vulnerability-only prompt block for
 // goals recognized as vulnerability-only, or "" for foothold tasks.
@@ -91,8 +91,8 @@ func plannerExecutionModeSpec(goal string) string {
 // evidence rather than weaponization or a mandatory foothold.
 const PlannerVulnerabilityOnlySpec = `
 
-**执行模式：仅漏洞路径（代码按任务目标识别）**
-- 只规划确认、复现和界定当前 Goal 指定漏洞所需的最少必要步骤，不把建立 Shell、WebShell、C2、持久化或内网移动设为目标或前置条件。
-- 以漏洞对应的可复现实测证据验收：确认达到 Goal 后即可按现有 prove_goal 流程完成，不额外追加武器化或立足点意图。
-- RCE 回显、文件上传落地/访问、反序列化链实证等可按当前 Goal 作为最终结果；不得把它们误写成已经建立 C2/交互会话。
-- 若发现其他有验证价值的方向，只能在当前“仅漏洞路径”目标范围内规划，不自动扩大任务目标。`
+**Execution mode: vulnerability only (identified by code from the task goal)**
+- Plan only the minimum steps needed to confirm, reproduce, and establish boundaries of the vulnerability specified in Goal. Do not make Shell, WebShell, C2, persistence, or internal movement a goal/prerequisite.
+- Accept reproducible measured evidence for that vulnerability. Once Goal is confirmed, complete it through prove_goal without adding weaponization/foothold intents.
+- RCE output, stored/accessed uploads, and demonstrated deserialization chains may be final results for the current Goal; do not misstate them as C2/interactive sessions.
+- Additional useful directions must remain within the current vulnerability-only goal; never expand the task automatically.`

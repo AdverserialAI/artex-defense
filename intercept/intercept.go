@@ -65,7 +65,7 @@ const (
 
 // reviewGateRulePrefix 是 seedReviewIntercept 种下的三条 K15 审核写工具 ask 规则的名称前缀
 // （server/review.go）。来源校验（§2.8）与日志识别共用。
-const reviewGateRulePrefix = "[内置] 审核写动作确认："
+const reviewGateRulePrefix = "[Built-in] Confirm review write action: "
 
 // ReviewWriteTools 是 K15 审核写工具名单：这五件工具的 ask 闸门只对 review 会话生效。
 // server/review.go 种子规则与 guard 来源校验过滤共用此名单（§2.8：planner 送审等
@@ -493,19 +493,19 @@ func (i *Interceptor) Judge(ctx context.Context, tool string, arguments json.Raw
 	if contextErr != nil {
 		// Invalid current arguments cannot be reviewed faithfully, regardless of
 		// the configured model-failure strategy. A human must resolve the input.
-		out = Decision{Action: "ask", ModelFallback: true, Message: "审查上下文不完整，需要人工确认：" + contextErr.Error()}
+		out = Decision{Action: "ask", ModelFallback: true, Message: "Review context incomplete; human confirmation required: " + contextErr.Error()}
 	} else {
 		modelInput, _ = json.Marshal(input)
 		out, err = rv(cctx, cfg.ProfileID, cfg.Prompt, input)
 	}
 	if err != nil {
-		out = Decision{ProfileID: out.ProfileID, ModelFallback: true, Action: cfg.FailAction, Message: "模型审批失败,按失败策略处理: " + err.Error()}
+		out = Decision{ProfileID: out.ProfileID, ModelFallback: true, Action: cfg.FailAction, Message: "Model review failed; applying failure policy: " + err.Error()}
 	}
 	switch out.Action {
 	case "allow", "ask", "deny":
 		// valid verdict
 	default:
-		out = Decision{ProfileID: out.ProfileID, ModelFallback: true, Action: cfg.FailAction, Message: "模型输出无法解析,按失败策略处理"}
+		out = Decision{ProfileID: out.ProfileID, ModelFallback: true, Action: cfg.FailAction, Message: "Model output could not be parsed; applying failure policy"}
 	}
 	// A model verdict never carries a rule; keep RuleID 0 (→ NULL) for history.
 	out.RuleID = 0
@@ -520,9 +520,9 @@ func (i *Interceptor) Judge(ctx context.Context, tool string, arguments json.Raw
 	configJSON, _ := json.Marshal(cfg)
 	out.ConfigDigest = digestInput(configJSON)
 	if out.Message == "" {
-		out.Message = "[模型] " + judgeActionLabel(out.Action)
-	} else if !strings.HasPrefix(out.Message, "[模型]") {
-		out.Message = "[模型] " + out.Message
+		out.Message = "[Model] " + judgeActionLabel(out.Action)
+	} else if !strings.HasPrefix(out.Message, "[Model]") {
+		out.Message = "[Model] " + out.Message
 	}
 	if out.Action == "ask" {
 		out.TimeoutEnabled = true
@@ -535,11 +535,11 @@ func (i *Interceptor) Judge(ctx context.Context, tool string, arguments json.Raw
 func judgeActionLabel(action string) string {
 	switch action {
 	case "allow":
-		return "放行"
+		return "Allow"
 	case "deny":
-		return "拦截"
+		return "Block"
 	case "ask":
-		return "转人工审批"
+		return "Ask for human approval"
 	default:
 		return action
 	}
@@ -559,9 +559,9 @@ func (i *Interceptor) Match(toolName string, input []byte) (Decision, bool) {
 			// 规则名前缀 [内置] 审核写动作确认：= seedReviewIntercept 种的 K15 闸门（server/review.go）。
 			if r.Action == "ask" {
 				if strings.HasPrefix(r.Name, reviewGateRulePrefix) {
-					log.Printf("[intercept] intercept ask：review 写工具闸门（K15）规则 %q 命中工具 %s", r.Name, toolName)
+					log.Printf("[intercept] ask: review write-tool gate (K15) rule %q matched tool %s", r.Name, toolName)
 				} else {
-					log.Printf("[intercept] intercept ask：规则 %q 命中工具 %s", r.Name, toolName)
+					log.Printf("[intercept] ask: rule %q matched tool %s", r.Name, toolName)
 				}
 			}
 			msg := r.Message
@@ -602,9 +602,9 @@ func ruleMatches(r compiledRule, toolName string, input []byte) bool {
 func defaultMessage(action, name string) string {
 	switch action {
 	case "deny":
-		return "拦截规则 [" + name + "] 禁止执行此工具"
+		return "Intercept rule [" + name + "] prohibits this tool"
 	case "ask":
-		return "拦截规则 [" + name + "] 要求用户审批，请等待"
+		return "Intercept rule [" + name + "] requires user approval; please wait"
 	default:
 		return ""
 	}
@@ -668,7 +668,7 @@ func (i *Interceptor) HandleAsk(ctx context.Context, convID int64, dec Decision,
 	})
 	activity := db.Activity{
 		Kind:    "intercept_request",
-		Summary: fmt.Sprintf("工具 %s 请求审批 (#%d)", toolName, pendingID),
+		Summary: fmt.Sprintf("Tool %s requests approval (#%d)", toolName, pendingID),
 		Detail:  string(detail),
 	}
 
@@ -687,8 +687,8 @@ func (i *Interceptor) HandleAsk(ctx context.Context, convID int64, dec Decision,
 		case allowed := <-ch:
 			return allowed
 		case <-ctx.Done():
-			_, _ = i.db.ResolveIntercept(pendingID, "denied", "deny", "工作已取消")
-			_ = i.db.CompleteIntercept(pendingID, audit.RunID, audit.ToolUseID, "not_executed", "执行前工作已取消", false)
+			_, _ = i.db.ResolveIntercept(pendingID, "denied", "deny", "Work cancelled")
+			_ = i.db.CompleteIntercept(pendingID, audit.RunID, audit.ToolUseID, "not_executed", "Work was cancelled before execution", false)
 			return false
 		}
 	}
@@ -708,7 +708,7 @@ func (i *Interceptor) HandleAsk(ctx context.Context, convID int64, dec Decision,
 		if allowed {
 			action = "allow"
 		}
-		resolved, err := i.db.ResolveIntercept(pendingID, "timeout", action, "审批超时，按超时策略处理")
+		resolved, err := i.db.ResolveIntercept(pendingID, "timeout", action, "Approval timed out; applying timeout policy")
 		if err != nil {
 			return false
 		}
@@ -718,13 +718,13 @@ func (i *Interceptor) HandleAsk(ctx context.Context, convID int64, dec Decision,
 		}
 		return allowed
 	case <-ctx.Done():
-		_, _ = i.db.ResolveIntercept(pendingID, "denied", "deny", "工作已取消")
-		_ = i.db.CompleteIntercept(pendingID, audit.RunID, audit.ToolUseID, "not_executed", "执行前工作已取消", false)
+		_, _ = i.db.ResolveIntercept(pendingID, "denied", "deny", "Work cancelled")
+		_ = i.db.CompleteIntercept(pendingID, audit.RunID, audit.ToolUseID, "not_executed", "Work was cancelled before execution", false)
 		return false
 	}
 }
 
-var ErrAlreadyDecided = errors.New("审批已处理或不存在，请刷新记录")
+var ErrAlreadyDecided = errors.New("Approval was already handled or does not exist. Refresh the records")
 
 // Decide resolves a pending request. Called by the HTTP decide endpoint.
 func (i *Interceptor) Decide(pendingID int64, allowed bool) error {
@@ -732,9 +732,9 @@ func (i *Interceptor) Decide(pendingID int64, allowed bool) error {
 	if allowed {
 		status = "allowed"
 	}
-	action, reason := "deny", "人工拒绝执行"
+	action, reason := "deny", "Execution denied by user"
 	if allowed {
-		action, reason = "allow", "人工允许执行"
+		action, reason = "allow", "Execution approved by user"
 	}
 	resolved, err := i.db.ResolveIntercept(pendingID, status, action, reason)
 	if err != nil {

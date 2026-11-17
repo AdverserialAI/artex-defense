@@ -1372,7 +1372,7 @@ export interface InterceptPending {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   tool_input: Record<string, any>;
   status: "pending" | "allowed" | "denied" | "timeout";
-  reason: string; // rule message or model decision reason (model decisions carry a [模型] prefix)
+  reason: string; // rule message or model decision reason (model decisions carry a [Model] prefix)
   decided_at?: string;
   created_at: string;
 }

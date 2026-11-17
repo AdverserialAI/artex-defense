@@ -107,11 +107,11 @@ func (a *templateAPI[T, In, P]) writeErrM(w http.ResponseWriter, err error) {
 	case errors.Is(err, a.errInvalid):
 		writeErr(w, http.StatusBadRequest, err.Error())
 	case errors.Is(err, a.errConflict):
-		writeErr(w, http.StatusConflict, "模板名称已存在")
+		writeErr(w, http.StatusConflict, "Template name already exists")
 	case errors.Is(err, a.errBuiltin):
 		writeErr(w, http.StatusConflict, a.builtinMsg)
 	case errors.Is(err, a.errDefault):
-		writeErr(w, http.StatusConflict, "默认模板不能删除，请先把默认让给别的模板")
+		writeErr(w, http.StatusConflict, "The default template cannot be deleted. Set another template as default first")
 	case errors.Is(err, a.errNotFound):
 		writeErr(w, http.StatusNotFound, a.notFoundMsg())
 	default:
@@ -134,7 +134,7 @@ func (a *templateAPI[T, In, P]) list(s *Server, w http.ResponseWriter, _ *http.R
 		a.localize(tpl)
 	}
 	// 【二开·P-LOG·S11】DEBUG 记列表（排障：前端下拉数据哪来的）。
-	xlog.Debugf("[tpl] %s-templates list：共 %d 个", a.kind, len(templates))
+	xlog.Debugf("[tpl] %s-templates list: %d total", a.kind, len(templates))
 	writeJSON(w, http.StatusOK, map[string]any{"templates": templates})
 }
 
@@ -149,7 +149,7 @@ func (a *templateAPI[T, In, P]) create(s *Server, w http.ResponseWriter, r *http
 		return
 	}
 	if req.Name != nil && utf8.RuneCountInString(strings.Join(strings.Fields(*req.Name), " ")) > a.maxNameRunes {
-		writeErr(w, http.StatusBadRequest, fmt.Sprintf("name 最多 %d 个字符", a.maxNameRunes))
+		writeErr(w, http.StatusBadRequest, fmt.Sprintf("name must not exceed %d characters", a.maxNameRunes))
 		return
 	}
 	if err := a.validateBody(stringValue(req.Body)); err != nil {
@@ -164,7 +164,7 @@ func (a *templateAPI[T, In, P]) create(s *Server, w http.ResponseWriter, r *http
 	a.localize(tpl)
 	// 【二开·P-LOG·S11】INFO 记创建（排障：这个模板什么时候进来的）。
 	id, name, nkey, body := a.fields.id(tpl), a.fields.name(tpl), a.fields.nkey(tpl), a.fields.body(tpl)
-	log.Printf("[tpl] %s 模板创建：#%d %q（nkey=%s，%dB）", a.kind, id, name, nkey, len(body))
+	log.Printf("[tpl] created %s template: #%d %q (nkey=%s, %dB)", a.kind, id, name, nkey, len(body))
 	writeJSON(w, http.StatusCreated, tpl)
 }
 
@@ -184,11 +184,11 @@ func (a *templateAPI[T, In, P]) update(s *Server, w http.ResponseWriter, r *http
 		return
 	}
 	if req.Name == nil && req.Body == nil {
-		writeErr(w, http.StatusBadRequest, "至少需要提供 name 或 body")
+		writeErr(w, http.StatusBadRequest, "Provide at least name or body")
 		return
 	}
 	if req.Name != nil && utf8.RuneCountInString(strings.Join(strings.Fields(*req.Name), " ")) > a.maxNameRunes {
-		writeErr(w, http.StatusBadRequest, fmt.Sprintf("name 最多 %d 个字符", a.maxNameRunes))
+		writeErr(w, http.StatusBadRequest, fmt.Sprintf("name must not exceed %d characters", a.maxNameRunes))
 		return
 	}
 	if req.Body != nil {
@@ -205,7 +205,7 @@ func (a *templateAPI[T, In, P]) update(s *Server, w http.ResponseWriter, r *http
 	a.localize(tpl)
 	// 【二开·P-LOG·S11】INFO 记更新（审计：谁改了提示词）。
 	id, name := a.fields.id(tpl), a.fields.name(tpl)
-	log.Printf("[tpl] %s 模板更新：#%d %q", a.kind, id, name)
+	log.Printf("[tpl] updated %s template: #%d %q", a.kind, id, name)
 	writeJSON(w, http.StatusOK, tpl)
 }
 
@@ -231,7 +231,7 @@ func (a *templateAPI[T, In, P]) delete(s *Server, w http.ResponseWriter, r *http
 		return
 	}
 	// 【二开·P-LOG·S11】WARN 记删除（排障：模板怎么没了；已选用任务不受影响=快照语义 D11-b）。
-	log.Printf("[tpl] %s 模板删除 ⚠ #%d（已选用任务持有快照不受影响）", a.kind, id)
+	log.Printf("[tpl] deleted %s template ⚠ #%d (tasks retain their snapshots and are unaffected)", a.kind, id)
 	writeJSON(w, http.StatusOK, map[string]any{"deleted": id})
 }
 
@@ -254,7 +254,7 @@ func (a *templateAPI[T, In, P]) setDefault(s *Server, w http.ResponseWriter, r *
 	a.localize(tpl)
 	// 【二开·P-LOG·S11】INFO 记默认切换（排障：默认模板什么时候换的）。
 	id, name := a.fields.id(tpl), a.fields.name(tpl)
-	log.Printf("[tpl] %s 默认模板切换 → #%d %q", a.kind, id, name)
+	log.Printf("[tpl] %s default template switched → #%d %q", a.kind, id, name)
 	writeJSON(w, http.StatusOK, tpl)
 }
 
@@ -269,6 +269,6 @@ func (a *templateAPI[T, In, P]) validateDryRun(_ *Server, w http.ResponseWriter,
 		return
 	}
 	// 【二开·P-LOG·S11】DEBUG 记试渲染（高频，默认关）。
-	xlog.Debugf("[tpl] %s 模板试渲染通过（%dB）", a.kind, len(stringValue(req.Body)))
+	xlog.Debugf("[tpl] %s template preview render passed (%dB)", a.kind, len(stringValue(req.Body)))
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }

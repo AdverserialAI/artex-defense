@@ -171,6 +171,9 @@ LEFT JOIN tasks task ON task.category_id=category.id
 WHERE category.nkey=$1
 GROUP BY category.id`, nkey))
 	if err == sql.ErrNoRows {
+		if legacy := scenarioLegacyKey(nkey); legacy != nkey {
+			return d.GetTaskCategoryByNKey(legacy)
+		}
 		return nil, nil
 	}
 	if err != nil {

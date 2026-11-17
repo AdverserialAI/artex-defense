@@ -11,7 +11,7 @@ cfg_ok()   { printf '\033[32m[+]\033[0m %s\n' "$*"; }
 cfg_die()  { printf '\033[31m[x]\033[0m %s\n' "$*" >&2; exit 1; }
 
 cfg_check() {
-	command -v psql >/dev/null 2>&1 || cfg_die "未检测到 psql（PostgreSQL 客户端）"
+	command -v psql >/dev/null 2>&1 || cfg_die "psql (PostgreSQL client) was not detected"
 	PSQL_URL=""
 	[ -n "${ARTEX_DB_URL:-}" ] && PSQL_URL="$ARTEX_DB_URL"
 }
@@ -29,12 +29,12 @@ cfg_sha() {
 # :'mcp_root' 在 SQL 里可用：导出机的 MCP 程序路径会被换成 {{MCP_ROOT}}（路径为空则原样）
 dump() {
 	_file="$1"; shift
-	cfg_info "导出 $_file"
-	psql -X -q -At $PSQL_URL <<EOF > "$CFG_OUT/$_file" || cfg_die "导出 $_file 失败"
+	cfg_info "Exporting $_file"
+	psql -X -q -At $PSQL_URL <<EOF > "$CFG_OUT/$_file" || cfg_die "Failed to export $_file"
 \set mcp_root '${MCP_BUNDLE_SRC:-}'
 COPY ($*) TO STDOUT
 EOF
-	printf '    %s 行\n' "$(wc -l < "$CFG_OUT/$_file" | tr -d ' ')"
+	printf '    %s rows\n' "$(wc -l < "$CFG_OUT/$_file" | tr -d ' ')"
 }
 
 cmd_export_config() {
@@ -46,7 +46,7 @@ cmd_export_config() {
 	# MCP 本地程序目录：$ARTEX_MCP_BUNDLE_DIR/<服务器名>/ 放该服务器需要的二进制、插件与配置；
 	# 库里 command/args 写该目录的绝对路径，导出时换成 {{MCP_ROOT}} 跟着配置包一起走。
 	MCP_BUNDLE_SRC="$(cd "${ARTEX_MCP_BUNDLE_DIR:-$PWD/data/mcp}" 2>/dev/null && pwd || true)"
-	case "$MCP_BUNDLE_SRC" in *"'"*) cfg_die "MCP 程序目录路径不能含单引号: $MCP_BUNDLE_SRC";; esac
+	case "$MCP_BUNDLE_SRC" in *"'"*) cfg_die "MCP program directory path must not contain single quotes: $MCP_BUNDLE_SRC";; esac
 
 	# LLM 配置档（含 api_key，敏感；重试/流式/会话头等全部运行参数随档走）
 	dump llm_profiles.jsonl "
@@ -140,15 +140,15 @@ SELECT row_to_json(t) FROM (
          env, url, enabled, insecure
   FROM mcp_servers ORDER BY id) t"
 
-	# MCP 本地程序：目录与文件清单一起打进导出包，导入端按清单校验 SHA256 后落盘
+	# Local MCP programs:目录与文件清单一起打进导出包，导入端按清单校验 SHA256 后落盘
 	: > "$CFG_OUT/mcp_bundles.tsv"
 	if [ -n "$MCP_BUNDLE_SRC" ] && [ -d "$MCP_BUNDLE_SRC" ]; then
-		cfg_info "导出 MCP 本地程序（$MCP_BUNDLE_SRC）"
+		cfg_info "Exporting local MCP programs ($MCP_BUNDLE_SRC)"
 		for _d in "$MCP_BUNDLE_SRC"/*; do
 			[ -d "$_d" ] || continue
 			_n="${_d##*/}"
-			mkdir -p "$CFG_OUT/mcp/$_n" || cfg_die "创建 mcp/$_n 失败"
-			cp -a "$_d"/. "$CFG_OUT/mcp/$_n"/ || cfg_die "复制 MCP 程序 $_n 失败"
+			mkdir -p "$CFG_OUT/mcp/$_n" || cfg_die "Failed to create mcp/$_n"
+			cp -a "$_d"/. "$CFG_OUT/mcp/$_n"/ || cfg_die "Failed to copy MCP program $_n"
 			(cd "$_d" && find . -type f -print | sort) | while IFS= read -r _f; do
 				_r="${_f#./}"
 				printf '%s\t%s\t%s\t%s\t%s\n' "$_n" "$_r" "$(cfg_sha "$_d/$_r")" \
@@ -156,7 +156,7 @@ SELECT row_to_json(t) FROM (
 					"$( [ -x "$_d/$_r" ] && echo 1 || echo 0 )" >> "$CFG_OUT/mcp_bundles.tsv"
 			done
 		done
-		printf '    %s 行\n' "$(wc -l < "$CFG_OUT/mcp_bundles.tsv" | tr -d ' ')"
+		printf '    %s rows\n' "$(wc -l < "$CFG_OUT/mcp_bundles.tsv" | tr -d ' ')"
 	fi
 
 	# agent 对 MCP 工具/资源的可见性（agent 按 key、MCP 按 name 重映射）
@@ -192,7 +192,7 @@ SELECT row_to_json(t) FROM (
 SELECT row_to_json(t) FROM (
   SELECT name, enabled, priority, match_target, match_type, pattern, action,
          message, timeout_enabled, timeout_seconds, timeout_action
-  FROM intercept_rules WHERE name NOT LIKE '[内置]%' ORDER BY id) t"
+  FROM intercept_rules WHERE name NOT LIKE '[Built-in]%' AND name NOT LIKE '[内置]%' ORDER BY id) t"
 
 	# 全局资产拦截/允许规则（仅非内置行）
 	dump asset_intercept_rules_custom.jsonl "
@@ -234,10 +234,10 @@ SELECT row_to_json(t) FROM (
 	fi
 
 	{
-		echo "artex 平台配置导出"
-		echo "时间: $(date -Iseconds)"
-		echo "主机: $(hostname)"
-		psql -X -q -At $PSQL_URL -c "SELECT '源库: ' || current_database()" 2>/dev/null || true
+		echo "artex platform configuration export"
+		echo "Time: $(date -Iseconds)"
+		echo "Host: $(hostname)"
+		psql -X -q -At $PSQL_URL -c "SELECT 'Source database: ' || current_database()" 2>/dev/null || true
 		# 结构指纹：导入端排障时一眼看出列漂移（哪些列是这次导出时存在的）
 		psql -X -q -At $PSQL_URL -c "
 SELECT 'cols[' || table_name || ']: ' || string_agg(column_name, ',' ORDER BY ordinal_position)
@@ -250,9 +250,9 @@ WHERE table_schema = current_schema() AND table_name IN
 GROUP BY table_name ORDER BY table_name" 2>/dev/null || true
 	} > "$CFG_OUT/manifest.txt"
 
-	cfg_ok "导出完成：$CFG_OUT"
-	echo "    MCP 本地程序：$( [ -d "$CFG_OUT/mcp" ] && du -sh "$CFG_OUT/mcp" | cut -f1 || echo '无' )"
-	echo "    导入：把整个目录拷到新环境后执行  ./start.sh import-config $CFG_OUT"
+	cfg_ok "Export complete:$CFG_OUT"
+	echo "    Local MCP programs:$( [ -d "$CFG_OUT/mcp" ] && du -sh "$CFG_OUT/mcp" | cut -f1 || echo 'none' )"
+	echo "    Import: copy the entire directory to the new environment, then run  ./start.sh import-config $CFG_OUT"
 }
 
 # imp <文件> <导入 SQL（读临时表 _st(doc jsonb)）>
@@ -260,9 +260,9 @@ GROUP BY table_name ORDER BY table_name" 2>/dev/null || true
 # SQL 里可用 :'mcp_root' 把 {{MCP_ROOT}} 换成目标机的 MCP 程序目录
 imp() {
 	_file="$1"; _sql="$2"
-	[ -s "$CFG_DIR/$_file" ] || { cfg_info "跳过 $_file（空或不存在）"; return 0; }
-	cfg_info "导入 $_file"
-	psql -X -q -1 -v ON_ERROR_STOP=1 $PSQL_URL <<SQL || cfg_die "导入 $_file 失败，单文件事务已回滚"
+	[ -s "$CFG_DIR/$_file" ] || { cfg_info "Skipping $_file (empty or missing)"; return 0; }
+	cfg_info "Importing $_file"
+	psql -X -q -1 -v ON_ERROR_STOP=1 $PSQL_URL <<SQL || cfg_die "Failed to import $_file; single-file transaction rolled back"
 \set mcp_root '${MCP_BUNDLE_DST:-}'
 CREATE TEMP TABLE _st(doc jsonb);
 \copy _st FROM '$CFG_DIR/$_file'
@@ -271,14 +271,14 @@ SQL
 }
 
 cmd_import_config() {
-	CFG_DIR="${1:?用法: ./start.sh import-config <导出目录>}"
-	[ -d "$CFG_DIR" ] || cfg_die "目录不存在: $CFG_DIR"
-	case "$CFG_DIR" in *"'"*) cfg_die "导出目录路径不能含单引号（会断 \\copy 的 SQL 引号）";; esac
+	CFG_DIR="${1:?Usage: ./start.sh import-config <Export directory>}"
+	[ -d "$CFG_DIR" ] || cfg_die "Directory does not exist: $CFG_DIR"
+	case "$CFG_DIR" in *"'"*) cfg_die "Export directory path must not contain single quotes (would break SQL quoting in \\copy)";; esac
 	cfg_check
 
 	# MCP 本地程序的落地目录（与导出端的 ARTEX_MCP_BUNDLE_DIR 对应）
-	MCP_BUNDLE_DST="$(mkdir -p "${ARTEX_MCP_BUNDLE_DIR:-$PWD/data/mcp}" && cd "${ARTEX_MCP_BUNDLE_DIR:-$PWD/data/mcp}" && pwd)" || cfg_die "创建 MCP 程序目录失败"
-	case "$MCP_BUNDLE_DST" in *"'"*) cfg_die "MCP 程序目录路径不能含单引号: $MCP_BUNDLE_DST";; esac
+	MCP_BUNDLE_DST="$(mkdir -p "${ARTEX_MCP_BUNDLE_DIR:-$PWD/data/mcp}" && cd "${ARTEX_MCP_BUNDLE_DIR:-$PWD/data/mcp}" && pwd)" || cfg_die "Failed to create MCP program directory"
+	case "$MCP_BUNDLE_DST" in *"'"*) cfg_die "MCP program directory path must not contain single quotes: $MCP_BUNDLE_DST";; esac
 
 	# 1. LLM 配置档（agents 绑档靠 name 重映射，须最先导入）
 	# is_default 有唯一部分索引 uq_llm_one_default：目标已有默认档时导入档不再抢默认
@@ -416,23 +416,23 @@ WHERE NOT EXISTS (SELECT 1 FROM agent_triggers t WHERE t.agent_key = _st.doc->>'
 	#     ARTEX_IMPORT_MCP_BIN=0 可跳过（只搬配置，不动可执行文件）
 	if [ -s "$CFG_DIR/mcp_bundles.tsv" ]; then
 		if [ "${ARTEX_IMPORT_MCP_BIN:-1}" = "1" ]; then
-			cfg_info "安装 MCP 本地程序到 $MCP_BUNDLE_DST"
+			cfg_info "Installing local MCP programs in $MCP_BUNDLE_DST"
 			_tab=$(printf '\t')
 			while IFS="$_tab" read -r _n _r _h _s _x; do
 				[ -n "$_n" ] || continue
-				case "$_r" in /*|*..*) cfg_die "非法文件路径: $_n/$_r";; esac
+				case "$_r" in /*|*..*) cfg_die "Invalid file path: $_n/$_r";; esac
 				_src="$CFG_DIR/mcp/$_n/$_r"
 				_dst="$MCP_BUNDLE_DST/$_n/$_r"
-				[ -f "$_src" ] || cfg_die "导出包缺文件: mcp/$_n/$_r"
-				mkdir -p "${_dst%/*}" || cfg_die "创建目录失败: ${_dst%/*}"
-				cp -p "$_src" "$_dst" || cfg_die "复制失败: $_dst"
+				[ -f "$_src" ] || cfg_die "File missing from export package: mcp/$_n/$_r"
+				mkdir -p "${_dst%/*}" || cfg_die "Failed to create directory: ${_dst%/*}"
+				cp -p "$_src" "$_dst" || cfg_die "Copy failed: $_dst"
 				[ "$_x" = "1" ] && chmod +x "$_dst"
 				_ah=$(cfg_sha "$_dst")
-				[ "$_ah" = "$_h" ] || cfg_die "SHA256 不匹配: $_dst（期望 $_h 实际 $_ah）"
+				[ "$_ah" = "$_h" ] || cfg_die "SHA256 mismatch: $_dst(expected $_h, got $_ah)"
 			done < "$CFG_DIR/mcp_bundles.tsv"
-			printf '    %s 个文件\n' "$(wc -l < "$CFG_DIR/mcp_bundles.tsv" | tr -d ' ')"
+			printf '    %s files\n' "$(wc -l < "$CFG_DIR/mcp_bundles.tsv" | tr -d ' ')"
 		else
-			cfg_info "跳过 MCP 本地程序（ARTEX_IMPORT_MCP_BIN=0）"
+			cfg_info "Skipping local MCP programs (ARTEX_IMPORT_MCP_BIN=0)"
 		fi
 	fi
 
@@ -557,19 +557,19 @@ INSERT INTO settings (key, value)
 SELECT doc->>'key', doc->>'value' FROM _st
 ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value;"
 
-	cfg_ok "全部配置导入完成"
-	echo "    MCP：新任务会按数据库中的启用配置自动连接；进行中的任务沿用原连接。"
-	echo "    如需立即刷新界面工具列表，请在 系统 → MCP 中执行刷新；无需由导入脚本直接启动进程。"
-	echo "    提示：自定义 skill 是文件不是表——如有自建 skill，请把旧环境 skills/ 下的"
-	echo "          自建目录一并拷到新环境安装目录的 skills/ 下。"
+	cfg_ok "All configuration imported"
+	echo "    MCP: new tasks connect automatically using enabled database configurations; ongoing tasks retain their existing connections."
+	echo "    To refresh the UI tool list immediately, refresh in System → MCP; the import script does not need to start processes."
+	echo "    Note: custom skills are files, not database tables. Copy custom directories from the old environment's skills/"
+	echo "          to skills/ in the new installation."
 }
 
 cmd_upgrade_prompts() {
 	cfg_check
 	_sql="scripts/upgrade-review-flow-prompts.sql"
-	[ -f "$_sql" ] || cfg_die "找不到 $_sql（发行包应自带；若手工精简过目录请补回）"
-	cfg_info "应用 $_sql"
-	psql -X -q -v ON_ERROR_STOP=1 $PSQL_URL -f "$_sql" || cfg_die "升级 SQL 执行失败"
-	cfg_ok "提示词/模板升级完成"
+	[ -f "$_sql" ] || cfg_die "$_sql not found (included in release packages; restore it if manually removed)"
+	cfg_info "Applying $_sql"
+	psql -X -q -v ON_ERROR_STOP=1 $PSQL_URL -f "$_sql" || cfg_die "Upgrade SQL failed"
+	cfg_ok "Prompt/template upgrade complete"
 }
 

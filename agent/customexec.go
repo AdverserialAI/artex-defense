@@ -44,7 +44,7 @@ type CustomExecutorConfig struct {
 
 // ErrNoMatchingIntent 表示当前自定义执行器没有可领取的 proposed/open intent。
 // Engine 收到该错误时保留原状态并停止 custom 阶段，不启动默认 Worker。
-var ErrNoMatchingIntent = errors.New("没有匹配的自定义执行器意图")
+var ErrNoMatchingIntent = errors.New("No matching custom-executor intent")
 
 // 【二开·P-EXEC·A2 自定义执行器】起 —— 意图级自定义执行器：装配工具与提示词执行一条意图（K18/K23）。
 // RunCustomExecutor 用声明 executor_key 的自定义 agent 执行一条意图。
@@ -56,11 +56,11 @@ var ErrNoMatchingIntent = errors.New("没有匹配的自定义执行器意图")
 // 返回 (终态原因, 写入统计, 错误)，与 worker.Execute 同签名语义，runIntent 终态分流零改动。
 func RunCustomExecutor(ctx context.Context, cfg CustomExecutorConfig) (harness.TerminalReason, WriteCounts, error) {
 	if cfg.Agent == nil {
-		return "", WriteCounts{}, errors.New("自定义执行器 Agent 不能为空")
+		return "", WriteCounts{}, errors.New("Custom executor Agent is required")
 	}
 	executorKey := cfg.Agent.ExecutorKey
 	if executorKey == "" {
-		return "", WriteCounts{}, errors.New("自定义执行器 Agent.ExecutorKey 不能为空")
+		return "", WriteCounts{}, errors.New("Custom executor Agent.ExecutorKey is required")
 	}
 	name := "exec:" + executorKey
 	tsx := NewToolSet(cfg.Store, name)
@@ -83,18 +83,18 @@ func RunCustomExecutor(ctx context.Context, cfg CustomExecutorConfig) (harness.T
 	// 动作审核上下文：工作目录即会话归属（与 worker 同机制；不继承父 run 的 background）。
 	ctx = intercept.WithReviewContext(ctx, runDir, intercept.ReviewBackground{})
 	// 【二开·P-LOG·A2】启动日志：INFO 记开始执行（排障：这个意图是谁在跑）。
-	log.Printf("[executor] 自定义执行器启动：task %d 意图 #%d agent=%s executor=%s", cfg.TaskID, cfg.Intent.ID, cfg.Agent.Name, name)
+	log.Printf("[executor] custom executor starting: task %d intent #%d agent=%s executor=%s", cfg.TaskID, cfg.Intent.ID, cfg.Agent.Name, name)
 	// 系统提示词：该自定义 agent 的模板（renderSystem 走提示词覆盖链）+ 意图块（A1）+ 启动指令。
 	sysBody := renderSystem(cfg.Agent.Key, "", map[string]any{
 		"Goal": cfg.Goal, "DataDir": cfg.WorkDir, "Now": time.Now().Format("2006-01-02 15:04"),
 	})
 	if cfg.RequireSelfClaim {
-		sysBody += "\n\n【执行器领取协议】先调用 list_intents(states=[\"proposed\"])，核对本 intent id 与 payload.executor 是否都匹配；无匹配时直接结束，不调用其他工具、不启动默认 Worker、不修改状态。找到后调用 claim_executor_intent(intent_id)，确认 state=running 且 owner=" + name + " 后再执行。只有真正完成才允许将 intent 置为 done；无匹配、暂停、报错、停止或耗尽均不得置为 done。"
+		sysBody += "\n\n[Executor claim protocol] First call list_intents(states=[\"proposed\"]) and verify this intent ID and payload.executor. If no match exists, stop immediately without other tool calls, starting the default Worker, or changing state. Otherwise call claim_executor_intent(intent_id) and confirm state=running and owner=" + name + " before execution. Mark the intent done only when actually complete. A missing match, pause, error, stop, or exhausted budget must never be marked done."
 	} else {
-		sysBody += "\n\n【Engine 预领取覆盖说明】本 intent 已由 Engine 以 " + name + " 领取且当前 state=running。忽略 Agent 提示词中任何先 list/claim 的要求，不要调用 list_intents 或 claim_executor_intent，不要重复领取；直接执行下面这条意图。只有真正完成才允许将 intent 置为 done；暂停、报错、停止或耗尽均不得置为 done。"
+		sysBody += "\n\n[Engine pre-claim override] The Engine already claimed this intent as " + name + " and its state is running. Ignore any Agent prompt requiring list/claim first. Do not call list_intents or claim_executor_intent or claim it again. Execute the intent below directly. Mark done only when actually complete; pauses, errors, stops, or exhausted budgets must never be marked done."
 	}
 	sysBody += RenderIntentTask(cfg.Intent) // A1
-	sysBody += "\n\n开始执行上面这条意图：只做它、只产生事实、assets、finding、做完即停。"
+	sysBody += "\n\nExecute the intent above: do only this intent, produce only facts, assets, and findings, and stop when complete."
 	system, boundary := deferredSystem(sysBody, def)
 	// 公共装配块（intent_exec_base.go）：权限旁路/代理/工作目录/输出溢出目录/待办。
 	// 差异字段在本函数覆写：Provider/SystemPrompt 用本 agent 模板、行预算用 agent 行预算、
@@ -115,14 +115,14 @@ func RunCustomExecutor(ctx context.Context, cfg CustomExecutorConfig) (harness.T
 	}
 	// emit 包装：打上执行器名与意图 id，活动流可追溯是哪个执行器跑的。
 	emitWrap := wrapIntentEmit(cfg.Emit, name, cfg.Intent.ID)
-	input := "执行下面这条意图。"
+	input := "Execute the following intent."
 	if cfg.RequireSelfClaim {
-		input = "执行你领到的意图。"
+		input = "Execute your claimed intent."
 	}
 	_, reason, err := captureRun(ctx, opts, input, emitWrap)
 	if err != nil {
 		// 【二开·P-LOG·A2】异常 WARN（排障：执行器为什么没跑完）。
-		log.Printf("[executor] 自定义执行器异常 ⚠ task %d 意图 #%d agent=%s：%v", cfg.TaskID, cfg.Intent.ID, name, err)
+		log.Printf("[executor] custom executor error ⚠ task %d intent #%d agent=%s: %v", cfg.TaskID, cfg.Intent.ID, name, err)
 		return reason, tsx.Writes(), err
 	}
 	if cfg.RequireSelfClaim {
@@ -133,20 +133,20 @@ func RunCustomExecutor(ctx context.Context, cfg CustomExecutorConfig) (harness.T
 			return reason, tsx.Writes(), getErr
 		}
 		if current == nil || ((current.State == "proposed" || current.State == "open") && current.Owner != name) {
-			log.Printf("[executor] task %d 意图 #%d agent=%s：无匹配领取，直接退出且不启动默认 Worker", cfg.TaskID, cfg.Intent.ID, name)
+			log.Printf("[executor] task %d intent #%d agent=%s: no matching claim; exiting without starting the default Worker", cfg.TaskID, cfg.Intent.ID, name)
 			return reason, tsx.Writes(), ErrNoMatchingIntent
 		}
 	}
 	// 兜底：什么都没写回时落一条事实，保证图上有执行痕迹（与 worker 兜底同语义）。
 	if tsx.Writes().Total() == 0 {
 		// 【二开·P-LOG·A2】零写占位 INFO（排障：这条占位 fact 是怎么来的）。
-		log.Printf("[executor] 自定义执行器零写入兜底：task %d 意图 #%d agent=%s 补占位 fact", cfg.TaskID, cfg.Intent.ID, name)
+		log.Printf("[executor] custom executor zero-write fallback: task %d intent #%d agent=%s; inserting placeholder fact", cfg.TaskID, cfg.Intent.ID, name)
 		_, _ = cfg.Store.AddNode("fact", map[string]any{
-			"text": fmt.Sprintf("意图 #%d 已由执行器 %s 执行（无结构化写回）", cfg.Intent.ID, name),
+			"text": fmt.Sprintf("Intent #%d was executed by executor %s (no structured output was saved)", cfg.Intent.ID, name),
 		}, 0, "confirmed", name, []int64{cfg.Intent.ID})
 	}
 	// 【二开·P-LOG·A2】完成 INFO（排障：跑没跑完、写了多少、怎么收的官）。
-	log.Printf("[executor] 自定义执行器完成：task %d 意图 #%d agent=%s 写入=%d 终止=%s", cfg.TaskID, cfg.Intent.ID, name, tsx.Writes().Total(), reason)
+	log.Printf("[executor] custom executor completed: task %d intent #%d agent=%s writes=%d terminal=%s", cfg.TaskID, cfg.Intent.ID, name, tsx.Writes().Total(), reason)
 	return reason, tsx.Writes(), nil
 }
 

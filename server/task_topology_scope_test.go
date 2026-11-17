@@ -87,7 +87,7 @@ func TestTopologyRoutesRequireInternalCategoryNKey(t *testing.T) {
 			req.SetPathValue("eid", "1")
 			rec := httptest.NewRecorder()
 			tc.handler(rec, req)
-			if rec.Code != http.StatusNotFound || !strings.Contains(rec.Body.String(), "内网拓扑仅适用于内网渗透任务") {
+			if rec.Code != http.StatusNotFound || !strings.Contains(rec.Body.String(), "Internal topology is only available for internal penetration testing tasks") {
 				t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 			}
 		})

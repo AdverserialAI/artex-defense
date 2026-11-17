@@ -43,7 +43,7 @@ func (s *Server) seedReviewIntercept() {
 	// （intercept/intercept.go#defaultEnabledTools：Bash/WebFetch 等 8 个，不含本组）→ 必须主动写回。
 	enabled, gErr := s.m.interceptor.GetEnabledTools()
 	if gErr != nil {
-		log.Printf("[review] intercept 启用集读取失败: %v", gErr)
+		log.Printf("[review] failed to read enabled intercept tools: %v", gErr)
 		return
 	}
 	seen := make(map[string]bool, len(enabled))
@@ -59,16 +59,16 @@ func (s *Server) seedReviewIntercept() {
 	}
 	if changed {
 		if err := s.m.interceptor.SetEnabledTools(enabled); err != nil {
-			log.Printf("[review] intercept 启用集写入失败: %v", err)
+			log.Printf("[review] failed to write enabled intercept tools: %v", err)
 		} else {
 			// 记录启用集补齐结果，便于排查审核写闸门是否生效。
-			log.Printf("[review] review 写工具补进 intercept 启用集成功（K15 会话写闸门生效）")
+			log.Printf("[review] added review write tools to enabled intercept tools (K15 conversation write gate active)")
 		}
 	}
 	// ② 三条 [内置] ask 规则种子（按 name 查重幂等）。
 	existing, err := pg.ListInterceptRules()
 	if err != nil {
-		log.Printf("[review] 读取拦截规则失败: %v", err)
+		log.Printf("[review] failed to read intercept rules: %v", err)
 		return
 	}
 	have := make(map[string]bool, len(existing))
@@ -76,7 +76,7 @@ func (s *Server) seedReviewIntercept() {
 		have[r.Name] = true
 	}
 	for _, tool := range reviewWriteTools {
-		name := "[内置] 审核写动作确认：" + tool
+		name := "[Built-in] Confirm review write action: " + tool
 		if have[name] {
 			continue
 		}
@@ -86,7 +86,7 @@ func (s *Server) seedReviewIntercept() {
 			"string",    // match_type：精确串
 			tool,        // pattern
 			"ask",       // 写动作一律进入人工确认，不调用 LLM 判定。
-			"review agent 写动作需人工确认（会话内确认卡放行）", // message
+			"Review agent write actions require human confirmation (approve through the conversation confirmation card)", // message
 			100,    // priority
 			true,   // enabled
 			true,   // timeout_enabled
@@ -94,10 +94,10 @@ func (s *Server) seedReviewIntercept() {
 			"deny", // timeout_action：超时自动拒绝
 		)
 		if err != nil {
-			log.Printf("[review] 种子拦截规则 %s 失败: %v", name, err)
+			log.Printf("[review] failed to seed intercept rule %s: %v", name, err)
 		} else {
 			// 记录种子规则，便于确认审核写动作的保护项是否存在。
-			log.Printf("[review] review 写工具拦截规则种子：%s（ask 按钮确认制）", name)
+			log.Printf("[review] seeded write-tool intercept rule: %s (ask button confirmation)", name)
 		}
 	}
 }
@@ -139,7 +139,7 @@ func (sl *reviewSlot) acquire(owner string, ttl time.Duration) bool {
 		return false
 	}
 	if sl.busy {
-		log.Printf("[review] review 槽位被抢占 ⚠ 前 holder=%s 租约过期未释放（疑似崩溃）", sl.owner)
+		log.Printf("[review] review slot reclaimed ⚠ previous holder=%s lease expired without release (possible crash)", sl.owner)
 	}
 	sl.busy, sl.owner, sl.until = true, owner, now.Add(ttl)
 	return true
@@ -194,7 +194,7 @@ func (rr *ReviewRunner) Wake() {
 // Run loops until ctx done，每 interval 扫一轮（启动即扫一次）；wake 通道随到随扫。
 func (rr *ReviewRunner) Run(ctx context.Context) {
 	// 记录扫描周期，便于确认预审调度已启动。
-	log.Printf("[review] review 审核轮启动：扫描间隔 %s（预审 + review_auto 自动处置）", rr.interval)
+	log.Printf("[review] review loop started: scan interval %s (pre-screening + review_auto disposition)", rr.interval)
 	tick := time.NewTicker(rr.interval)
 	defer tick.Stop()
 	rr.sweep(ctx) // 启动即扫一轮：重启恢复场景待审意图不该空等一个周期
@@ -236,12 +236,12 @@ func (s *Server) checkExecutorKey(key string) error {
 func (rr *ReviewRunner) sweep(ctx context.Context) {
 	taskIDs, err := rr.s.m.pg.TasksWithProposed()
 	if err != nil {
-		log.Printf("[review] sweep 获取待审任务失败: %v", err)
+		log.Printf("[review] sweep failed to fetch pending-review tasks: %v", err)
 		return
 	}
 	// 记录本轮发现的待审任务数。
 	if len(taskIDs) > 0 {
-		log.Printf("[review] 审核轮拾取：%d 个任务有待审意图", len(taskIDs))
+		log.Printf("[review] review round selected %d tasks with pending intents", len(taskIDs))
 	}
 	for id := range taskIDs {
 		select {
@@ -268,7 +268,7 @@ func (rr *ReviewRunner) preReviewTask(ctx context.Context, t *Task) {
 	// 预审或自动轮未拿到租约时跳过，本轮不排队；下一轮再试。
 	slot := rr.slotFor(t.ID)
 	if !slot.acquire("prescreen", 5*time.Minute) {
-		log.Printf("[review] task %s 预审跳过：review 槽位被占用（owner=%s）", t.ID, slot.ownerName())
+		log.Printf("[review] task %s pre-screen skipped: review slot occupied (owner=%s)", t.ID, slot.ownerName())
 		return
 	}
 	defer slot.release()
@@ -282,11 +282,11 @@ func (rr *ReviewRunner) preReviewTask(ctx context.Context, t *Task) {
 	prov := rr.reviewProvider(t)
 	if prov == nil {
 		// provider 不可用时记录告警，避免审核被静默跳过。
-		log.Printf("[review] task %s 预审跳过 ⚠ reviewProvider() 为 nil（review agent 缺失/禁用/无 LLM 绑定）——%d 条待审意图无人预审", t.ID, len(fresh))
+		log.Printf("[review] task %s pre-screen skipped ⚠ reviewProvider() is nil (review agent missing/disabled/no LLM binding); %d intents await pre-screening", t.ID, len(fresh))
 		return
 	}
 	// 记录本次审核的意图数和自动处置状态。
-	log.Printf("[review] task %s 进入审核轮：%d 条待审意图（review_auto=%v）", t.ID, len(fresh), t.ReviewAuto)
+	log.Printf("[review] task %s started review round: %d pending intents (review_auto=%v)", t.ID, len(fresh), t.ReviewAuto)
 	// ReviewPreScreenConfig.TaskID 是 string 型（agent 侧签名）——t.ID 直接传，不再 ParseInt。
 	rr.s.engine.BeginLLMCall(t.ID)
 	defer rr.s.engine.EndLLMCall(t.ID)
@@ -301,7 +301,7 @@ func (rr *ReviewRunner) preReviewTask(ctx context.Context, t *Task) {
 	}
 	verdicts, err := agent.RunReviewPreScreen(ctx, cfg)
 	if err != nil {
-		log.Printf("[review] task %s 预审失败: %v", t.ID, err)
+		log.Printf("[review] task %s pre-screen failed: %v", t.ID, err)
 		return
 	}
 	// 预审只写建议并保持 pending；自动处置仅在 review_auto=true 时执行。
@@ -317,17 +317,17 @@ func (rr *ReviewRunner) preReviewTask(ctx context.Context, t *Task) {
 			ok, err := t.Store.SetPrescreenPassNote(id, note, versions[id])
 			if err != nil || !ok {
 				dropped++
-				log.Printf("[review] task %s 意图 #%d 预审 pass 标注落库丢弃（版本冲突/已被处置）: %v", t.ID, id, err)
+				log.Printf("[review] task %s intent #%d pre-screen pass annotation discarded (version conflict/already handled): %v", t.ID, id, err)
 				continue
 			}
 			passed++
 			rr.s.engine.emitActivity(t, db.Activity{Worker: "review", Kind: "text",
-				Summary: fmt.Sprintf("意图 #%d 预审建议放行（待人工批准）", id)})
+				Summary: fmt.Sprintf("Intent #%d pre-screen recommends approval (awaiting human approval)", id)})
 		case "revise":
 			ok, err := t.Store.SetPrescreenVerdict(id, note, versions[id])
 			if err != nil || !ok {
 				dropped++
-				log.Printf("[review] task %s 意图 #%d 预审 revise 落库丢弃（版本冲突/已被处置）: %v", t.ID, id, err)
+				log.Printf("[review] task %s intent #%d pre-screen revise annotation discarded (version conflict/already handled): %v", t.ID, id, err)
 				continue
 			}
 			revised++
@@ -335,9 +335,9 @@ func (rr *ReviewRunner) preReviewTask(ctx context.Context, t *Task) {
 	}
 	if passed+revised > 0 {
 		// 人工全审：无任何自动放行，不 Notify——意图保持 pending 等人在审核面板处置。
-		log.Printf("[review] task %s 预审落账（人工全审）：建议放行 %d / 建议修订 %d / 丢弃 %d", t.ID, passed, revised, dropped)
+		log.Printf("[review] task %s pre-screen recorded (full human review): recommended approval %d / revision %d / discarded %d", t.ID, passed, revised, dropped)
 		rr.s.engine.emitActivity(t, db.Activity{Worker: "review", Kind: "text",
-			Summary: fmt.Sprintf("预审完成：建议放行 %d 条、建议修订 %d 条（均待人工处置）", passed, revised)})
+			Summary: fmt.Sprintf("Pre-screen complete: %d recommended for approval, %d for revision (all await human decisions)", passed, revised)})
 	}
 }
 
@@ -349,13 +349,13 @@ func (rr *ReviewRunner) autoDecide(ctx context.Context, t *Task, cfg agent.Revie
 		Provider: cfg.Provider, FreshIDs: cfg.FreshIDs, Emit: cfg.Emit,
 	})
 	if err != nil {
-		log.Printf("[review] task %s 自动审核失败（本轮全部留人）: %v", t.ID, err)
+		log.Printf("[review] task %s automatic review failed (all left for human review this round): %v", t.ID, err)
 		return
 	}
 	if len(decisions) == 0 && len(cfg.FreshIDs) > 0 {
 		// 连续未决可能表示审核提示词或模型异常。
 		if rr.bumpUndecided(t.ID) >= 3 {
-			log.Printf("[review] task %s ⚠ 自动审核连续 3 轮以上全未决（%d 条待审无人处置），请检查 review agent 配置", t.ID, len(cfg.FreshIDs))
+			log.Printf("[review] task %s ⚠ automatic review left every intent undecided for at least 3 rounds (%d pending); check review agent configuration", t.ID, len(cfg.FreshIDs))
 		}
 	} else if len(decisions) > 0 {
 		rr.resetUndecided(t.ID)
@@ -370,7 +370,7 @@ func (rr *ReviewRunner) autoDecide(ctx context.Context, t *Task, cfg agent.Revie
 		case "approve":
 			ok, err := t.Store.ApproveIntentAt(d.ID, versions[d.ID]) // 批准时确定执行器。
 			if err != nil {
-				log.Printf("[review] task %s 自动放行 #%d 失败: %v", t.ID, d.ID, err)
+				log.Printf("[review] task %s failed to auto-approve #%d: %v", t.ID, d.ID, err)
 				continue
 			}
 			if !ok {
@@ -378,7 +378,7 @@ func (rr *ReviewRunner) autoDecide(ctx context.Context, t *Task, cfg agent.Revie
 			}
 			approved++
 			rr.s.engine.emitActivity(t, db.Activity{Worker: "review", Kind: "text",
-				Summary: fmt.Sprintf("意图 #%d 已自动放行：%s", d.ID, note)})
+				Summary: fmt.Sprintf("Intent #%d automatically approved: %s", d.ID, note)})
 		case "reject":
 			_, _, ok, err := t.Store.RequestRevisionAt(d.ID, note, versions[d.ID]) // 驳回后退回修订。
 			if err != nil {
@@ -386,10 +386,10 @@ func (rr *ReviewRunner) autoDecide(ctx context.Context, t *Task, cfg agent.Revie
 					// 模型驳回了却给不出理由（且节点无既有 review_note）——决策未能执行，
 					// 等同未决：计入连续未决告警，避免静默空转（审核员报告 P2-12）。
 					if rr.bumpUndecided(t.ID) >= 3 {
-						log.Printf("[review] task %s ⚠ 自动驳回连续缺理由（ErrNoteRequired），请检查 review agent 输出", t.ID)
+						log.Printf("[review] task %s ⚠ repeated automatic rejections without reasons (ErrNoteRequired); check review agent output", t.ID)
 					}
 				}
-				log.Printf("[review] task %s 自动驳回 #%d 失败: %v", t.ID, d.ID, err)
+				log.Printf("[review] task %s failed to auto-reject #%d: %v", t.ID, d.ID, err)
 				continue
 			}
 			if !ok {
@@ -399,13 +399,13 @@ func (rr *ReviewRunner) autoDecide(ctx context.Context, t *Task, cfg agent.Revie
 			// §4.2.3 三件套：revision_requested 事件送达 planner（带 IntentID+理由）。
 			t.NotifyRevisionRequested(d.ID, note)
 			rr.s.engine.emitActivity(t, db.Activity{Worker: "review", Kind: "text",
-				Summary: fmt.Sprintf("意图 #%d 已自动驳回（退回修订）：%s", d.ID, note)})
+				Summary: fmt.Sprintf("Intent #%d automatically rejected (returned for revision): %s", d.ID, note)})
 		}
 	}
 	if approved > 0 {
 		t.Notify() // 有放行 → 唤醒 worker 池立即领取
 	}
-	log.Printf("[review] task %s 自动审核完成：放行 %d / 驳回 %d / 留人 %d", t.ID, approved, rejected, len(cfg.FreshIDs)-approved-rejected)
+	log.Printf("[review] task %s automatic review complete: approved %d / rejected %d / left for human review %d", t.ID, approved, rejected, len(cfg.FreshIDs)-approved-rejected)
 }
 
 // reviewProvider 依次尝试任务配置链、review agent 绑定和全局默认 profile。
@@ -446,7 +446,7 @@ func (s *Server) reviewListProposed(w http.ResponseWriter, r *http.Request) {
 	}
 	if !t.ReviewEnabled {
 		// 【二开·P-REVIEW·D2c】任务级总开关（m03934）：未开启审核的任务拒绝审核域请求
-		writeErr(w, 409, "该任务未开启意图审核（review_enabled=false）")
+		writeErr(w, 409, "Intent review is disabled for this task (review_enabled=false)")
 		return
 	}
 	ns, err := t.Store.ProposedIntents(100) // D3
@@ -493,7 +493,7 @@ func (s *Server) reviewApprove(w http.ResponseWriter, r *http.Request) {
 	}
 	if !t.ReviewEnabled {
 		// 【二开·P-REVIEW·D2c】任务级总开关（m03934）：未开启审核的任务拒绝审核域请求
-		writeErr(w, 409, "该任务未开启意图审核（review_enabled=false）")
+		writeErr(w, 409, "Intent review is disabled for this task (review_enabled=false)")
 		return
 	}
 	intentID, err := strconv.ParseInt(r.PathValue("intentID"), 10, 64)
@@ -518,8 +518,8 @@ func (s *Server) reviewApprove(w http.ResponseWriter, r *http.Request) {
 		// 【审核-2】db 层以哨兵错误报告 CAS 未命中（状态门禁/版本漂移/节点不存在），
 		// HTTP 语义上都是「已被并发处置」→ 409，不是 500。
 		if errors.Is(err, db.ErrNotPendingReview) || errors.Is(err, db.ErrStaleVersion) || errors.Is(err, db.ErrIntentNotFound) {
-			log.Printf("[review] 人工审核 approve 冲突 ⚠ task %s 意图 #%d：%v", t.ID, intentID, err)
-			writeErr(w, 409, "意图已被处理（并发冲突）")
+			log.Printf("[review] human approval conflict ⚠ task %s intent #%d: %v", t.ID, intentID, err)
+			writeErr(w, 409, "Intent has already been handled (concurrent update conflict)")
 			return
 		}
 		writeErr(w, 500, err.Error())
@@ -527,15 +527,15 @@ func (s *Server) reviewApprove(w http.ResponseWriter, r *http.Request) {
 	}
 	if !ok2 { // CAS 冲突：已不在待审池（并发重复处置）
 		// 版本冲突返回 409，前端刷新后再裁决。
-		log.Printf("[review] 人工审核 approve 冲突 ⚠ task %s 意图 #%d 已不在待审池（并发重复处置或已驳回）", t.ID, intentID)
-		writeErr(w, 409, "意图已被处理（并发冲突）")
+		log.Printf("[review] human approval conflict ⚠ task %s intent #%d no longer pending (concurrent decision or already rejected)", t.ID, intentID)
+		writeErr(w, 409, "Intent has already been handled (concurrent update conflict)")
 		return
 	}
 	// 记录人工批准的任务、意图和操作者。
-	log.Printf("[review] 人工审核 approve：task %s 意图 #%d（版本 CAS=%d）", t.ID, intentID, ver)
+	log.Printf("[review] human approval: task %s intent #%d (version CAS=%d)", t.ID, intentID, ver)
 	t.Notify() // 唤醒 planner/worker 池立即领取放行的 open 意图
 	s.engine.emitActivity(t, db.Activity{Worker: "review", Kind: "text",
-		Summary: fmt.Sprintf("意图 #%d 已批准放行", intentID)})
+		Summary: fmt.Sprintf("Intent #%d approved", intentID)})
 	writeJSON(w, 200, map[string]any{"ok": true})
 }
 
@@ -549,7 +549,7 @@ func (s *Server) reviewReject(w http.ResponseWriter, r *http.Request) {
 	}
 	if !t.ReviewEnabled {
 		// 【二开·P-REVIEW·D2c】任务级总开关（m03934）：未开启审核的任务拒绝审核域请求
-		writeErr(w, 409, "该任务未开启意图审核（review_enabled=false）")
+		writeErr(w, 409, "Intent review is disabled for this task (review_enabled=false)")
 		return
 	}
 	intentID, err := strconv.ParseInt(r.PathValue("intentID"), 10, 64)
@@ -566,7 +566,7 @@ func (s *Server) reviewReject(w http.ResponseWriter, r *http.Request) {
 	}
 	reason := strings.TrimSpace(body.Reason)
 	if reason == "" {
-		writeErr(w, 400, "驳回理由必填")
+		writeErr(w, 400, "Rejection reason is required")
 		return
 	}
 	ver, err := resolveReviewVersion(t.Store, intentID, body.ExpectedVersion)
@@ -579,8 +579,8 @@ func (s *Server) reviewReject(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		// 【审核-2】同上：CAS 未命中以哨兵错误返回 → 409。
 		if errors.Is(err, db.ErrNotPendingReview) || errors.Is(err, db.ErrStaleVersion) || errors.Is(err, db.ErrIntentNotFound) {
-			log.Printf("[review] 人工审核 reject 冲突 ⚠ task %s 意图 #%d：%v", t.ID, intentID, err)
-			writeErr(w, 409, "意图已被处理（并发冲突）")
+			log.Printf("[review] human rejection conflict ⚠ task %s intent #%d: %v", t.ID, intentID, err)
+			writeErr(w, 409, "Intent has already been handled (concurrent update conflict)")
 			return
 		}
 		writeErr(w, 500, err.Error())
@@ -588,16 +588,16 @@ func (s *Server) reviewReject(w http.ResponseWriter, r *http.Request) {
 	}
 	if !ok2 { // CAS 冲突：已不在待审池（并发重复处置）
 		// 记录驳回时的版本冲突。
-		log.Printf("[review] 人工审核 reject 冲突 ⚠ task %s 意图 #%d 已不在待审池（并发重复处置或已放行）", t.ID, intentID)
-		writeErr(w, 409, "意图已被处理（并发冲突）")
+		log.Printf("[review] human rejection conflict ⚠ task %s intent #%d no longer pending (concurrent decision or already approved)", t.ID, intentID)
+		writeErr(w, 409, "Intent has already been handled (concurrent update conflict)")
 		return
 	}
 	// 记录人工驳回的任务、意图和操作者。
-	log.Printf("[review] 人工审核 reject：task %s 意图 #%d 理由=%q（退回修订）", t.ID, intentID, firstLine(reason, 60))
+	log.Printf("[review] human rejection: task %s intent #%d reason=%q (returned for revision)", t.ID, intentID, firstLine(reason, 60))
 	// §4.2.3 三件套：revision_requested 事件送达 planner（带 IntentID+理由）。
 	t.NotifyRevisionRequested(intentID, reason)
 	s.engine.emitActivity(t, db.Activity{Worker: "review", Kind: "text",
-		Summary: fmt.Sprintf("意图 #%d 已驳回：%s", intentID, reason)})
+		Summary: fmt.Sprintf("Intent #%d rejected: %s", intentID, reason)})
 	writeJSON(w, 200, map[string]any{"ok": true})
 }
 
@@ -617,7 +617,7 @@ func (s *Server) reviewChat(w http.ResponseWriter, r *http.Request) {
 	}
 	if !t.ReviewEnabled {
 		// 【二开·P-REVIEW·D2c】任务级总开关（m03934）：未开启审核的任务拒绝审核域请求
-		writeErr(w, 409, "该任务未开启意图审核（review_enabled=false）")
+		writeErr(w, 409, "Intent review is disabled for this task (review_enabled=false)")
 		return
 	}
 	var body struct {
@@ -625,19 +625,19 @@ func (s *Server) reviewChat(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := decodeJSONBounded(w, r, &body, maxMediumJSONBodyBytes); err != nil {
 		if !writeJSONBodyTooLarge(w, err) {
-			writeErr(w, 400, "message 必填")
+			writeErr(w, 400, "message is required")
 		}
 		return
 	}
 	if strings.TrimSpace(body.Message) == "" {
-		writeErr(w, 400, "message 必填")
+		writeErr(w, 400, "message is required")
 		return
 	}
 	// 单飞门：同任务同刻只允许一个 review 会话在跑（原子 CAS，与 chatBusy 同款模式）。
 	if !t.reviewBusy.CompareAndSwap(false, true) {
 		// 同任务已有审核会话时记录并返回 409。
-		log.Printf("[review] review chat 拒绝 ⚠ task %s 上一轮未结束（busy 互斥）", t.ID)
-		writeErr(w, 409, "review 会话正在处理上一条消息")
+		log.Printf("[review] review chat rejected ⚠ task %s previous round still active (busy lock)", t.ID)
+		writeErr(w, 409, "Review conversation is still processing the previous message")
 		return
 	}
 	// 对话与预审、自动处置共用每任务租约。
@@ -645,18 +645,18 @@ func (s *Server) reviewChat(w http.ResponseWriter, r *http.Request) {
 	chatSlot := s.reviewRunnerSlot(t.ID)
 	if !chatSlot.acquire("chat", 10*time.Minute) {
 		t.reviewBusy.Store(false)
-		log.Printf("[review] review chat 拒绝 ⚠ task %s review 槽位被 %s 占用", t.ID, chatSlot.ownerName())
-		writeErr(w, 409, "审核轮正在处理该任务，请稍后重试")
+		log.Printf("[review] review chat rejected ⚠ task %s review slot occupied by %s", t.ID, chatSlot.ownerName())
+		writeErr(w, 409, "A review round is processing this task. Please try again later")
 		return
 	}
 	// 把异步会话纳入任务删除/归档屏障，避免数据库删除后仍有 review 写入。
 	if !s.engine.beginTaskOperation(t.ID) {
 		t.reviewBusy.Store(false)
 		chatSlot.release()
-		writeErr(w, 409, "任务正在删除或归档，无法发起 review 会话")
+		writeErr(w, 409, "Task is being deleted or archived; a review conversation cannot be started")
 		return
 	}
-	xlog.Debugf("[review] review chat 受理：task %s 消息 %q", t.ID, firstLine(strings.TrimSpace(body.Message), 60))
+	xlog.Debugf("[review] review chat accepted: task %s message %q", t.ID, firstLine(strings.TrimSpace(body.Message), 60))
 	msg := strings.TrimSpace(body.Message)
 	s.engine.emitActivity(t, db.Activity{Worker: "review", Kind: "user", Summary: msg, Detail: msg})
 	ctx, cancel := context.WithTimeout(s.ctx, 3*time.Minute)
@@ -679,7 +679,7 @@ func (s *Server) reviewChat(w http.ResponseWriter, r *http.Request) {
 		// 会话不随 HTTP 请求取消；删除/归档通过 cancelReview 主动终止，3 分钟超时作为最终兜底。
 		prov := (&ReviewRunner{s: s}).reviewProvider(t)
 		if prov == nil {
-			s.engine.emitActivity(t, db.Activity{Worker: "review", Kind: "error", Summary: "review agent 不可用（未启用或未绑定 LLM）"})
+			s.engine.emitActivity(t, db.Activity{Worker: "review", Kind: "error", Summary: "Review agent is unavailable (disabled or no LLM binding)"})
 			return
 		}
 		s.engine.BeginLLMCall(t.ID)
@@ -703,7 +703,7 @@ func (s *Server) reviewChat(w http.ResponseWriter, r *http.Request) {
 			CheckExecutor: s.checkExecutorKey,
 			Hooks:         t.Guard.Hooks(),
 		}); err != nil {
-			s.engine.emitActivity(t, db.Activity{Worker: "review", Kind: "error", Summary: "review 会话异常：" + err.Error()})
+			s.engine.emitActivity(t, db.Activity{Worker: "review", Kind: "error", Summary: "Review conversation error: " + err.Error()})
 		}
 	}()
 	writeJSON(w, 202, map[string]any{"accepted": true})
@@ -718,7 +718,7 @@ func (s *Server) reviewMessages(w http.ResponseWriter, r *http.Request) {
 	}
 	if !t.ReviewEnabled {
 		// 【二开·P-REVIEW·D2c】任务级总开关（m03934）：未开启审核的任务拒绝审核域请求
-		writeErr(w, 409, "该任务未开启意图审核（review_enabled=false）")
+		writeErr(w, 409, "Intent review is disabled for this task (review_enabled=false)")
 		return
 	}
 	acts, _, err := t.Store.ActivityPageWithDetail(db.ActivitySessionFilter{Worker: "review"}, 0, 200) // 审核域消息统一打 worker="review"
@@ -735,7 +735,7 @@ func (s *Server) reviewMessages(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		// 兼容旧数据：此前人工消息存的是 kind=text+「【人工】」前缀，出口映射成 kind=user 供前端右侧气泡。
-		if kind == "text" && strings.HasPrefix(a.Summary, "【人工】") {
+		if kind == "text" && strings.HasPrefix(a.Summary, "[Human]") {
 			kind = "user"
 		}
 		out = append(out, map[string]any{

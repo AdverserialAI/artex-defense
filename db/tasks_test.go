@@ -104,7 +104,7 @@ func TestTaskPreAgentPersistenceAndBackfill(t *testing.T) {
 	addSeed := func(tk *Task, state, origin, executor string) int64 {
 		t.Helper()
 		id, err := d.Exploration(tk.ExplorationID).AddNode(KindIntent, map[string]any{
-			"summary": origin + " " + state,
+			"summary":  origin + " " + state,
 			"executor": executor,
 		}, 1, state, origin, nil)
 		if err != nil {
@@ -765,7 +765,7 @@ RETURNING id`, domainB, companyB).Scan(&companyAssetB); err != nil {
 			t.Errorf("company asset %d missing from task", assetID)
 			continue
 		}
-		if asset.TaskSource != taskCompanyAssetSource || asset.TaskSourceSummary != "任务创建时关联企业："+companyName {
+		if asset.TaskSource != taskCompanyAssetSource || asset.TaskSourceSummary != "Company linked at task creation: "+companyName {
 			t.Errorf("asset %d provenance=%q/%q", assetID, asset.TaskSource, asset.TaskSourceSummary)
 		}
 	}

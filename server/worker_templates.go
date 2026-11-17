@@ -37,14 +37,14 @@ const maxWorkerTemplateRequestBytes = 64 << 10 // 请求体上限（正文 32KB 
 //     32KB 上限在此把守（db 层 normalize 再兜一次，双保险）。
 func validateWorkerTemplateBody(body string) error {
 	if strings.TrimSpace(body) == "" {
-		return fmt.Errorf("模板正文不能为空")
+		return fmt.Errorf("Template body is required")
 	}
 	if len(body) > db.MaxWorkerTemplateBodyBytes {
-		return fmt.Errorf("模板正文最多 %d 字节（32KB），当前 %d 字节", db.MaxWorkerTemplateBodyBytes, len(body))
+		return fmt.Errorf("Template body must not exceed %d bytes (32KB); got %d bytes", db.MaxWorkerTemplateBodyBytes, len(body))
 	}
 	t, err := parseValidateTemplate(body)
 	if err != nil {
-		return fmt.Errorf("模板语法错误：%w", err)
+		return fmt.Errorf("Template syntax error: %w", err)
 	}
 	vars := agent.WorkerVars{
 		ProxyAddr:  "http://127.0.0.1:8788",
@@ -54,7 +54,7 @@ func validateWorkerTemplateBody(body string) error {
 	}
 	var b bytes.Buffer
 	if err := t.Execute(&b, vars); err != nil {
-		return fmt.Errorf("试渲染失败（可能引用了目录外变量；合法变量：%s）：%w", workerTemplateVarsHint, err)
+		return fmt.Errorf("Preview render failed (possibly an unsupported variable; allowed variables: %s): %w", workerTemplateVarsHint, err)
 	}
 	return nil
 }
@@ -72,7 +72,7 @@ var workerTemplatesAPI = &templateAPI[db.WorkerTemplate, db.WorkerTemplateInput,
 	errBuiltin:   db.ErrWorkerTemplateBuiltin,
 	errDefault:   db.ErrWorkerTemplateDefaultProtected,
 	errNotFound:  db.ErrWorkerTemplateNotFound,
-	builtinMsg:   "内置模板正文可编辑，但名称/nkey 不可修改，且内置模板不能删除",
+	builtinMsg:   "Built-in template bodies can be edited, but their name/nkey cannot be changed and built-in templates cannot be deleted",
 	toInput:      func(name, body string) db.WorkerTemplateInput { return db.WorkerTemplateInput{Name: name, Body: body} },
 	toPatch:      func(name, body *string) db.WorkerTemplatePatch { return db.WorkerTemplatePatch{Name: name, Body: body} },
 	fields: templateEntityFields[db.WorkerTemplate]{

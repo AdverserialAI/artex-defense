@@ -41,7 +41,7 @@ func (s *Server) addGoal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !s.engine.beginTaskOperation(t.ID) {
-		writeErr(w, 409, "任务正在删除,无法新增目标")
+		writeErr(w, 409, "Task is being deleted; goals cannot be added")
 		return
 	}
 	defer s.engine.decInflight(t.ID)
@@ -55,7 +55,7 @@ func (s *Server) addGoal(w http.ResponseWriter, r *http.Request) {
 	}
 	text := strings.TrimSpace(body.Text)
 	if text == "" {
-		writeErr(w, 400, "目标内容不能为空")
+		writeErr(w, 400, "Goal content is required")
 		return
 	}
 	payload := map[string]any{"text": text}
@@ -74,7 +74,7 @@ func (s *Server) addGoal(w http.ResponseWriter, r *http.Request) {
 	s.reviveTask(t)              // 把已完成/暂停的任务拉回运行态继续跑
 	node, _ := t.Store.GetNode(id)
 	if node == nil {
-		writeErr(w, 500, "目标写入后读取失败")
+		writeErr(w, 500, "Failed to read goal after saving")
 		return
 	}
 	writeJSON(w, 200, goalDTO(node))
@@ -89,7 +89,7 @@ func (s *Server) editGoal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !s.engine.beginTaskOperation(t.ID) {
-		writeErr(w, 409, "任务正在删除,无法修改目标")
+		writeErr(w, 409, "Task is being deleted; goals cannot be modified")
 		return
 	}
 	defer s.engine.decInflight(t.ID)
@@ -108,7 +108,7 @@ func (s *Server) editGoal(w http.ResponseWriter, r *http.Request) {
 	}
 	text := strings.TrimSpace(body.Text)
 	if text == "" {
-		writeErr(w, 400, "目标内容不能为空")
+		writeErr(w, 400, "Goal content is required")
 		return
 	}
 	node, err := t.Store.GetNode(gid)
@@ -117,7 +117,7 @@ func (s *Server) editGoal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if node == nil || node.Kind != db.KindGoal {
-		writeErr(w, 404, "目标不存在")
+		writeErr(w, 404, "Goal does not exist")
 		return
 	}
 	oldText := goalDTO(node).Text
@@ -129,7 +129,7 @@ func (s *Server) editGoal(w http.ResponseWriter, r *http.Request) {
 	s.reviveTask(t)                   // 与新增一致:复活任务据新目标重判
 	updated, _ := t.Store.GetNode(gid)
 	if updated == nil {
-		writeErr(w, 500, "目标更新后读取失败")
+		writeErr(w, 500, "Failed to read goal after updating")
 		return
 	}
 	writeJSON(w, 200, goalDTO(updated))
@@ -144,7 +144,7 @@ func (s *Server) deleteGoal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !s.engine.beginTaskOperation(t.ID) {
-		writeErr(w, 409, "任务正在删除,无法删除目标")
+		writeErr(w, 409, "Task is being deleted; goals cannot be deleted")
 		return
 	}
 	defer s.engine.decInflight(t.ID)
@@ -160,7 +160,7 @@ func (s *Server) deleteGoal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if node == nil || node.Kind != db.KindGoal {
-		writeErr(w, 404, "目标不存在")
+		writeErr(w, 404, "Goal does not exist")
 		return
 	}
 	text := goalDTO(node).Text

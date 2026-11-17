@@ -38,10 +38,10 @@ type intentIDVersionReq struct {
 
 func (r *intentIDVersionReq) validate() error {
 	if r.IntentID <= 0 {
-		return fmt.Errorf("intent_id 必填且必须为正整数")
+		return fmt.Errorf("intent_id is required and must be a positive integer")
 	}
 	if r.ExpectedVersion == nil {
-		return fmt.Errorf("expected_version 必填：先调用 list_intents 查看该意图的 content_version 原样填入（乐观锁，防覆盖他人并发修改）")
+		return fmt.Errorf("expected_version is required. Call list_intents and copy this intent's content_version exactly (optimistic locking prevents overwriting concurrent edits)")
 	}
 	return nil
 }
@@ -55,10 +55,10 @@ func (t *ToolSet) mainAgentOpenOnly(intentID int64) error {
 	}
 	n, err := t.ts.GetNodeWithSources(intentID)
 	if err != nil || n == nil {
-		return fmt.Errorf("意图 #%d 不存在", intentID)
+		return fmt.Errorf("Intent #%d does not exist", intentID)
 	}
 	if n.State != "open" {
-		return fmt.Errorf("mainagent 只能修改/取消 open 状态的意图（#%d 当前 state=%s）；待审/驳回稿请走审核面板，执行中意图请用 steer_work/control_work", intentID, n.State)
+		return fmt.Errorf("mainagent can modify/cancel only open intents (#%d currently state=%s). Use the review panel for pending/rejected drafts and steer_work/control_work for executing intents", intentID, n.State)
 	}
 	return nil
 }
@@ -66,14 +66,14 @@ func (t *ToolSet) mainAgentOpenOnly(intentID int64) error {
 // updateIntent 修订一条意图（§5/§6）。
 func (t *ToolSet) updateIntent() actool.CoreTool {
 	return t.writeExpTool("update_intent",
-		"【修订意图】修改一条 open（待执行）或 rejected（被驳回待修订）意图：可改 summary/priority/asset_ids/target_executor，未传字段保持不变。pending（审核中）与执行中意图不可修改。必填 expected_version（先用 list_intents 查 content_version 原样填入）。驳回稿有任何修改后自动重送审核（review_status→pending）；已有产出的意图不可再改（请 cancel_intent 后用 add_intent/add_review_intent 重发新稿）。",
+		"Revise an open or rejected intent. summary, priority, asset_ids, and target_executor can be changed; omitted fields remain unchanged. Pending or executing intents cannot be modified. expected_version is required (read content_version with list_intents first). Any modification to a rejected draft automatically resubmits it for review (review_status=pending). Intents with output cannot be changed; cancel them and create a new intent with add_intent or add_review_intent.",
 		obj(map[string]any{
-			"intent_id":        idp("要修订的意图 id"),
-			"expected_version": intp("必填：该意图当前 content_version（list_intents 返回），乐观锁"),
-			"summary":          str("可选：新的意图描述"),
-			"priority":         intp("可选：新优先级 0-10"),
-			"asset_ids":        map[string]any{"type": "array", "items": map[string]any{"type": "integer"}, "description": "可选：整组替换目标资产 id（资产锚点同步重建）"},
-			"target_executor":  str("可选：新的建议执行器 executor_key（写 pending_executor，批准时转正；空串=清除建议）"),
+			"intent_id":        idp("ID of the intent to revise"),
+			"expected_version": intp("Required: current content_version from list_intents (optimistic lock)"),
+			"summary":          str("Optional: new intent description"),
+			"priority":         intp("Optional: new priority, 0–10"),
+			"asset_ids":        map[string]any{"type": "array", "items": map[string]any{"type": "integer"}, "description": "Optional: replace the complete target asset ID set (asset anchors are rebuilt)"},
+			"target_executor":  str("Optional: new suggested executor_key (stored in pending_executor and applied on approval; empty clears the suggestion)"),
 		}),
 		func(_ context.Context, in json.RawMessage) (actool.Result, error) {
 			var req struct {
@@ -90,7 +90,7 @@ func (t *ToolSet) updateIntent() actool.CoreTool {
 				return actool.Errorf(err.Error()), nil
 			}
 			if req.Summary == nil && req.Priority == nil && req.AssetIDs == nil && req.TargetExecutor == nil {
-				return actool.Errorf("至少要传一个待修改字段（summary/priority/asset_ids/target_executor）"), nil
+				return actool.Errorf("Provide at least one field to modify (summary/priority/asset_ids/target_executor)"), nil
 			}
 			if err := t.mainAgentOpenOnly(req.IntentID); err != nil {
 				return actool.Errorf(err.Error()), nil
@@ -98,17 +98,17 @@ func (t *ToolSet) updateIntent() actool.CoreTool {
 			if req.TargetExecutor != nil && strings.TrimSpace(*req.TargetExecutor) != "" && t.checkExecutor != nil {
 				te := strings.TrimSpace(*req.TargetExecutor)
 				if err := t.checkExecutor(te); err != nil {
-					return actool.Errorf(fmt.Sprintf("target_executor %q 不可用：%v；请改用已注册且启用的自定义 agent", te, err)), nil
+					return actool.Errorf(fmt.Sprintf("target_executor %q is unavailable: %v. Use a registered, enabled custom agent", te, err)), nil
 				}
 			}
 			// 【审核-2 P1-4】修订 asset_ids 同样过资产范围拦截（与 createIntent 同口径）：
 			// 否则范围外资产可经修订静默挂到意图锚点并交给 worker 执行。
 			if req.AssetIDs != nil && len(*req.AssetIDs) > 0 && t.as != nil {
 				if hits, err := t.as.CheckAssetsIntercept(t.taskID, *req.AssetIDs); err != nil {
-					return actool.Errorf(fmt.Sprintf("资产拦截校验失败：%v", err)), nil
+					return actool.Errorf(fmt.Sprintf("Asset block-rule validation failed: %v", err)), nil
 				} else if len(hits) > 0 {
 					var b strings.Builder
-					b.WriteString("意图修订绑定的资产未通过测试范围校验，请停止对相关资产进行测试：")
+					b.WriteString("Revised intent assets failed scope validation. Stop testing the affected assets: ")
 					for _, h := range hits {
 						fmt.Fprintf(&b, "\n - %s", h.Describe())
 					}
@@ -122,14 +122,14 @@ func (t *ToolSet) updateIntent() actool.CoreTool {
 			if err != nil {
 				switch {
 				case errors.Is(err, db.ErrStaleVersion):
-					return actool.Errorf(fmt.Sprintf("版本冲突：%v；请重新 list_intents 取最新 content_version 再试", err)), nil
+					return actool.Errorf(fmt.Sprintf("Version conflict: %v. Call list_intents for the latest content_version and retry", err)), nil
 				case errors.Is(err, db.ErrIntentNotEditable), errors.Is(err, db.ErrIntentProduced),
 					errors.Is(err, db.ErrNoChange), errors.Is(err, db.ErrIntentNotFound):
 					return actool.Errorf(err.Error()), nil
 				}
 				return actool.Result{}, err
 			}
-			log.Printf("[intent] update_intent：意图 #%d 修订 %v（review_reset=%v，by %s）", upd.ID, upd.Changed, upd.ReviewReset, t.worker)
+			log.Printf("[intent] update_intent: intent #%d revised %v (review_reset=%v, by %s)", upd.ID, upd.Changed, upd.ReviewReset, t.worker)
 			if upd.ReviewReset && t.notifyReview != nil {
 				t.notifyReview(upd.ID) // 驳回稿重送 → 立即唤醒审核轮（§2.6）
 			}
@@ -140,11 +140,11 @@ func (t *ToolSet) updateIntent() actool.CoreTool {
 // cancelIntent 取消（软删除）一条意图（§9.1）。
 func (t *ToolSet) cancelIntent() actool.CoreTool {
 	return t.writeExpTool("cancel_intent",
-		"【取消意图】软删除一条 open/proposed 意图（state→deleted，保留节点与血缘，理由记 delete_reason）：放弃某条待执行意图、放弃驳回稿的修订、或撤回误送审的稿子用它。必填 expected_version（list_intents 查 content_version）。running/paused 执行中意图不可取消——先用 control_work 停止执行。",
+		"Soft-delete an open or proposed intent (state=deleted, preserving its node and lineage and recording delete_reason). Use it to abandon a pending intent, discard a rejected draft, or withdraw an intent submitted for review by mistake. expected_version is required (read content_version with list_intents). Running or paused intents cannot be cancelled; stop them with control_work first.",
 		obj(map[string]any{
-			"intent_id":        idp("要取消的意图 id"),
-			"expected_version": intp("必填：该意图当前 content_version（list_intents 返回），乐观锁"),
-			"reason":           str("必填：取消理由（记 delete_reason，审计可见）"),
+			"intent_id":        idp("ID of the intent to cancel"),
+			"expected_version": intp("Required: current content_version from list_intents (optimistic lock)"),
+			"reason":           str("Required: cancellation reason (saved in delete_reason and visible in audits)"),
 		}),
 		func(_ context.Context, in json.RawMessage) (actool.Result, error) {
 			var req struct {
@@ -163,22 +163,22 @@ func (t *ToolSet) cancelIntent() actool.CoreTool {
 			// 【审核-2 P2-8】reason 必填（§11 PR4 规格）——取消是破坏性动作，理由必须可追溯；
 			// db 侧的默认理由只作兜底，不再作为主要路径。
 			if strings.TrimSpace(req.Reason) == "" {
-				return actool.Errorf("reason 必填：取消理由（记 delete_reason，审计可见）"), nil
+				return actool.Errorf("reason is required (saved in delete_reason and visible in audits)"), nil
 			}
 			summary, err := t.ts.SoftDeleteIntentAt(req.IntentID, strings.TrimSpace(req.Reason), *req.ExpectedVersion)
 			if err != nil {
 				switch {
 				case errors.Is(err, db.ErrStaleVersion):
-					return actool.Errorf(fmt.Sprintf("版本冲突：%v；请重新 list_intents 取最新 content_version 再试", err)), nil
+					return actool.Errorf(fmt.Sprintf("Version conflict: %v. Call list_intents for the latest content_version and retry", err)), nil
 				case errors.Is(err, db.ErrIntentNotEditable), errors.Is(err, db.ErrIntentNotFound):
 					return actool.Errorf(err.Error()), nil
 				}
 				return actool.Result{}, err
 			}
-			log.Printf("[intent] cancel_intent：意图 #%d 已软删（by %s，理由=%q）", req.IntentID, t.worker, req.Reason)
+			log.Printf("[intent] cancel_intent: intent #%d soft-deleted (by %s, reason=%q)", req.IntentID, t.worker, req.Reason)
 			if t.notifyHint != nil {
 				// 取消改变 frontier 格局 → 唤醒 planner 重审目标达成判定。
-				t.notifyHint([]string{fmt.Sprintf("意图 #%d（%s）已取消：%s", req.IntentID, firstLine(summary, 60), req.Reason)})
+				t.notifyHint([]string{fmt.Sprintf("Intent #%d (%s) cancelled: %s", req.IntentID, firstLine(summary, 60), req.Reason)})
 			} else if t.notify != nil {
 				t.notify()
 			}
@@ -193,21 +193,21 @@ func (t *ToolSet) cancelIntent() actool.CoreTool {
 // 同一个 CAS 同时完成 proposed/open → running 和 owner=exec:<key>，确保不会重复领取。
 func (t *ToolSet) claimExecutorIntent() actool.CoreTool {
 	return t.writeExpTool("claim_executor_intent",
-		"【自定义执行器领取】把一条 proposed/open 且 payload.executor 与当前 Agent executor_key 完全匹配的 intent 原子改为 running。只能由声明了 executor_key 的自定义 Agent 或其内部 exec:<key> 身份调用；不经过默认 Worker。返回 {claimed,state,owner,intent_id,reason}。重复领取、executor 不匹配或状态已变化均返回 claimed=false，不修改原 intent。",
+		"Custom executor claim: atomically change a proposed/open intent to running only when payload.executor exactly matches the current agent's executor_key. Callable only by a custom agent declaring executor_key or its internal exec:<key> identity; it bypasses the default Worker. Returns {claimed,state,owner,intent_id,reason}. Repeated claims, executor mismatches, and changed states return claimed=false without modifying the intent.",
 		obj(map[string]any{
-			"intent_id": idp("要领取的探索意图 id（先用 list_intents 查询）"),
+			"intent_id": idp("Exploration intent ID to claim (query list_intents first)"),
 		}),
 		func(_ context.Context, in json.RawMessage) (actool.Result, error) {
 			executorKey := t.executorKey
 			if executorKey == "" {
-				return actool.Errorf("当前身份未配置 executor_key，不能领取自定义执行器意图"), nil
+				return actool.Errorf("Current identity has no executor_key and cannot claim custom-executor intents"), nil
 			}
 			if !strings.HasPrefix(t.worker, "exec:") {
 				if t.worker == "" || t.checkExecutor == nil {
-					return actool.Errorf("仅自定义执行器可以调用 claim_executor_intent"), nil
+					return actool.Errorf("Only custom executors can call claim_executor_intent"), nil
 				}
 				if err := t.checkExecutor(executorKey); err != nil {
-					return actool.Errorf(fmt.Sprintf("当前 Agent 不是有效的自定义执行器：%v", err)), nil
+					return actool.Errorf(fmt.Sprintf("Current Agent is not a valid custom executor: %v", err)), nil
 				}
 			}
 			var req struct {
@@ -217,25 +217,25 @@ func (t *ToolSet) claimExecutorIntent() actool.CoreTool {
 				return actool.Errorf(fmt.Sprintf("invalid input: %v", err)), nil
 			}
 			if req.IntentID <= 0 {
-				return actool.Errorf("intent_id 必填且必须为正整数"), nil
+				return actool.Errorf("intent_id is required and must be a positive integer"), nil
 			}
 			n, err := t.ts.GetNode(req.IntentID)
 			if err != nil {
 				return actool.Result{}, err
 			}
 			if n == nil {
-				return jsonResult(map[string]any{"claimed": false, "reason": "intent 不存在或已删除"})
+				return jsonResult(map[string]any{"claimed": false, "reason": "Intent does not exist or has been deleted"})
 			}
 			if n.State != "proposed" && n.State != "open" {
-				return jsonResult(map[string]any{"claimed": false, "reason": "intent 当前不是 proposed/open", "state": n.State})
+				return jsonResult(map[string]any{"claimed": false, "reason": "Intent is not currently proposed/open", "state": n.State})
 			}
 			var payload map[string]any
 			if err := json.Unmarshal(n.Payload, &payload); err != nil {
-				return jsonResult(map[string]any{"claimed": false, "reason": "intent payload.executor 无效"})
+				return jsonResult(map[string]any{"claimed": false, "reason": "Intent payload.executor is invalid"})
 			}
 			executor, _ := payload["executor"].(string)
 			if executor == "" || executor == "review" || executor != executorKey {
-				return jsonResult(map[string]any{"claimed": false, "reason": "payload.executor 与当前执行器不匹配", "expected_executor": executorKey, "actual_executor": executor})
+				return jsonResult(map[string]any{"claimed": false, "reason": "payload.executor does not match the current executor", "expected_executor": executorKey, "actual_executor": executor})
 			}
 			owner := "exec:" + executorKey
 			claimed, err := t.ts.ClaimExecutorIntent(n.ID, n.State, executorKey, owner)
@@ -243,9 +243,9 @@ func (t *ToolSet) claimExecutorIntent() actool.CoreTool {
 				return actool.Result{}, err
 			}
 			if !claimed {
-				return jsonResult(map[string]any{"claimed": false, "reason": "领取冲突：状态或 executor 已变化"})
+				return jsonResult(map[string]any{"claimed": false, "reason": "Claim conflict: state or executor changed"})
 			}
-			log.Printf("[executor] %s 通过 claim_executor_intent 领取 intent #%d：%s → running", t.worker, n.ID, n.State)
+			log.Printf("[executor] %s claimed intent #%d through claim_executor_intent: %s → running", t.worker, n.ID, n.State)
 			return jsonResult(map[string]any{
 				"claimed": true, "intent_id": n.ID, "state": "running", "owner": owner,
 			})

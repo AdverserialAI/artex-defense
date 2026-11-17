@@ -92,13 +92,13 @@ func wireAgentAugment(pg *db.DB, skillDir string, hostTools func() ([]actool.Cor
 				}
 				cl, err := connectMCP(ctx, m)
 				if err != nil {
-					log.Printf("[mcp] %s 连接失败: %v", m.Name, err)
+					log.Printf("[mcp] %s connection failed: %v", m.Name, err)
 					continue
 				}
 				closers = append(closers, cl)
 				ts, err := cl.Tools(ctx)
 				if err != nil {
-					log.Printf("[mcp] %s tools/list 失败: %v", m.Name, err)
+					log.Printf("[mcp] %s tools/list failed: %v", m.Name, err)
 					continue
 				}
 				for _, t := range ts {
@@ -202,11 +202,11 @@ func seedPrompts(pg *db.DB) {
 	for key, tmpl := range agent.BuiltinPromptSeeds() {
 		a, err := pg.GetAgentByKey(key)
 		if err != nil || a == nil {
-			log.Printf("[prompts] seed %s 跳过: agent 不存在 (%v)", key, err)
+			log.Printf("[prompts] skipping seed %s: agent does not exist (%v)", key, err)
 			continue
 		}
 		if err := pg.SeedPromptIfEmpty(a.ID, tmpl); err != nil {
-			log.Printf("[prompts] seed %s 失败: %v", key, err)
+			log.Printf("[prompts] failed to seed %s: %v", key, err)
 		}
 	}
 	// 【二开·P-TPL·D11】起 —— 内置默认规划模板 seed：首插入 only，与上面 agent_prompts 的
@@ -214,14 +214,14 @@ func seedPrompts(pg *db.DB) {
 	// （BuiltinPromptSeeds()["planner"] 透出），db 层不复制、不反向 import agent。
 	// 【二开·P-LOG·S11】INFO 仅首插记一条（排障：模板库里"外网渗透"是哪次启动进来的）。
 	if inserted, err := pg.SeedPlannerTemplateIfEmpty(db.PlannerTemplateBuiltinName, db.PlannerTemplateBuiltinNKey, agent.BuiltinPromptSeeds()["planner"], true); err != nil {
-		log.Printf("[prompts] seed planner_templates 内置默认模板失败: %v", err)
+		log.Printf("[prompts] failed to seed built-in default planner template: %v", err)
 	} else if inserted {
-		log.Printf("[tpl] planner 模板首插：外网渗透（nkey=%s）", db.PlannerTemplateBuiltinNKey)
+		log.Printf("[tpl] inserted external penetration testing planner template (nkey=%s)", scenarioReference(db.PlannerTemplateBuiltinNKey))
 	}
 	if inserted, err := pg.SeedWorkerTemplateIfEmpty(db.WorkerTemplateBuiltinName, db.WorkerTemplateBuiltinNKey, agent.BuiltinPromptSeeds()["worker"], true); err != nil {
-		log.Printf("[prompts] seed worker_templates 外网渗透默认模板失败: %v", err)
+		log.Printf("[prompts] failed to seed default external penetration testing worker template: %v", err)
 	} else if inserted {
-		log.Printf("[tpl] worker 模板首插：外网渗透（nkey=%s）", db.WorkerTemplateBuiltinNKey)
+		log.Printf("[tpl] inserted external penetration testing worker template (nkey=%s)", scenarioReference(db.WorkerTemplateBuiltinNKey))
 	}
 	// 【二开·P-TPL·D11】止
 	// 【二开·P-TPL·DOMAIN】起 —— 五领域 planner 模板 seed（内网渗透/权限提升/漏洞利用/漏洞挖掘/代码审计）：
@@ -229,32 +229,32 @@ func seedPrompts(pg *db.DB) {
 	// 同名自定义模板已存在时静默跳过、不覆盖用户改动。正文单源=agent/planner_domain_templates.go。
 	for name, body := range agent.PlannerDomainSeeds() {
 		if inserted, err := pg.SeedPlannerTemplateIfEmpty(name, name, body, false); err != nil {
-			log.Printf("[prompts] seed planner 领域模板 %s 失败: %v", name, err)
+			log.Printf("[prompts] failed to seed planner domain template %s: %v", localizeScenarioName(name), err)
 		} else if inserted {
-			log.Printf("[tpl] planner 领域模板首插：%s", name)
+			log.Printf("[tpl] inserted planner domain template: %s", localizeScenarioName(name))
 		}
 	}
 	// Worker 与 Planner 使用同一组场景 nkey；正文保存完整 Worker 提示词，
 	// 首插后不覆盖管理员对内置场景模板的修改。
 	for _, seed := range agent.WorkerDomainSeeds() {
 		if inserted, err := pg.SeedWorkerTemplateIfEmpty(seed.NKey, seed.NKey, seed.Body, false); err != nil {
-			log.Printf("[prompts] seed worker 场景模板 %s 失败: %v", seed.NKey, err)
+			log.Printf("[prompts] failed to seed worker scenario template %s: %v", scenarioReference(seed.NKey), err)
 		} else if inserted {
-			log.Printf("[tpl] worker 场景模板首插：%s", seed.NKey)
+			log.Printf("[tpl] inserted worker scenario template: %s", scenarioReference(seed.NKey))
 		}
 	}
 	// 【二开·P-TPL·DOMAIN】止
 	if err := upgradeScopeAuthorizationPrompts(pg); err != nil {
-		log.Printf("[prompts] 授权范围提示词迁移失败: %v", err)
+		log.Printf("[prompts] authorized-scope prompt migration failed: %v", err)
 	}
 	if err := upgradeWorkerDeliveryFacts(pg); err != nil {
-		log.Printf("[prompts] Worker 投放事实提示词迁移失败: %v", err)
+		log.Printf("[prompts] worker fact-reporting prompt migration failed: %v", err)
 	}
 	if err := upgradeInternalWorkerTopologyPrompt(pg); err != nil {
-		log.Printf("[prompts] 内网 Worker 拓扑提示词迁移失败: %v", err)
+		log.Printf("[prompts] internal worker topology prompt migration failed: %v", err)
 	}
 	if err := upgradeWorkerTopologyFactPrompt(pg); err != nil {
-		log.Printf("[prompts] 内网 Worker 拓扑 fact 提示词迁移失败: %v", err)
+		log.Printf("[prompts] internal worker topology fact prompt migration failed: %v", err)
 	}
 	// 【二开·P-SCENARIO·MERGE】起 —— 外网渗透 + 内置五领域场景 seed 为「分类预设包」：
 	// 模板按 nkey 解析 id（模板 seed 就在上方，天然有序）；内网渗透/权限提升/漏洞利用默认开审核，
@@ -281,9 +281,9 @@ func seedPrompts(pg *db.DB) {
 			workerTplID = tpl.ID
 		}
 		if inserted, err := pg.SeedTaskCategoryPresetIfEmpty(sc.name, sc.review, tplID, workerTplID, false, ""); err != nil {
-			log.Printf("[prompts] seed 场景分类 %s 失败: %v", sc.name, err)
+			log.Printf("[prompts] failed to seed scenario category %s: %v", sc.name, err)
 		} else if inserted {
-			log.Printf("[tpl] 场景分类首插：%s（review=%v）", sc.name, sc.review)
+			log.Printf("[tpl] inserted scenario category: %s (review=%v)", sc.name, sc.review)
 		}
 	}
 	upgradeExternalPentestReviewDefault(pg)
@@ -304,7 +304,7 @@ func wireTools(pg *db.DB, domainReg map[string]actool.CoreTool) {
 		schema, _ := json.Marshal(s.Schema)
 		agents, _ := json.Marshal(s.Agents)
 		if err := pg.SeedTool(s.Key, s.Desc, schema, agents); err != nil {
-			log.Printf("[tools] seed %s 失败: %v", s.Key, err)
+			log.Printf("[tools] failed to seed %s: %v", s.Key, err)
 		}
 	}
 	// Seed the traffic host tools so they're bindable per-agent like built-ins.
@@ -315,17 +315,17 @@ func wireTools(pg *db.DB, domainReg map[string]actool.CoreTool) {
 	for _, t := range traffic.SeedToolMetas() {
 		schema, _ := json.Marshal(t.InputSchema())
 		if err := pg.SeedTool(t.Name(), t.Description(), schema, trafficAgents); err != nil {
-			log.Printf("[tools] seed %s 失败: %v", t.Name(), err)
+			log.Printf("[tools] failed to seed %s: %v", t.Name(), err)
 		}
 	}
 	// bashInteractiveShellNote is appended to Bash's description ONLY for agents whose
 	// interactive_shell is on, so Bash points at shell_open for interactive programs
 	// without ever referencing a tool that isn't injected (§14.1/§14.2).
-	const bashInteractiveShellNote = "\n\n需要【交互输入】的程序（msfconsole / ssh 交互登录 / mysql、psql、python 等 REPL / 密码或 yes/no 提示 / nc 反弹 shell）不要用 Bash（它没有 stdin、会卡住），改用 shell_open 开交互会话（用完 shell_close）。一次性、非交互命令仍用 Bash。"
+	const bashInteractiveShellNote = "\n\nFor programs requiring **interactive input** (msfconsole / interactive ssh login / mysql, psql, python or other REPLs / password or yes/no prompts / nc reverse shells), use shell_open to open an interactive session and shell_close when finished. Do not use Bash: it has no stdin and will hang. Continue to use Bash for one-off, non-interactive commands."
 	agent.ToolResolve = func(ctx context.Context, agentKey string, tools []actool.CoreTool) []actool.CoreTool {
 		rows, err := pg.ListTools()
 		if err != nil {
-			log.Printf("[tools] 读取工具表失败，按代码默认放行: %v", err)
+			log.Printf("[tools] failed to read tool table; using code defaults: %v", err)
 			return tools
 		}
 		configuredAgent, _ := pg.GetAgentByKey(agentKey)
@@ -436,7 +436,7 @@ func wireTools(pg *db.DB, domainReg map[string]actool.CoreTool) {
 			}
 		}
 		if len(shellHints) > 0 {
-			note := "\n\n以下工具已安装在此 bash 环境中，可直接通过 Bash 调用：\n" + strings.Join(shellHints, "\n")
+			note := "\n\nThe following tools are installed in this Bash environment and can be invoked directly through Bash:\n" + strings.Join(shellHints, "\n")
 			for i, t := range out {
 				if t.Name() == "Bash" {
 					out[i] = agent.DecorateTool(t, t.Description()+note, t.InputSchema())

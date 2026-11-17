@@ -16,8 +16,8 @@ type WorkerDomainSeed struct {
 // workerDomainBaseTmpl excludes the external-pentest-only foothold dispatch
 // section before materializing the other scenario templates.
 func workerDomainBaseTmpl() string {
-	const sectionStart = "\n\n【立足点证据】"
-	const sectionEnd = "\n\n完成本意图后"
+	const sectionStart = "\n\n[Foothold evidence]"
+	const sectionEnd = "\n\nAfter completing this intent"
 	start := strings.Index(workerDefaultTmpl, sectionStart)
 	end := strings.Index(workerDefaultTmpl, sectionEnd)
 	if start >= 0 && end > start {
@@ -30,38 +30,38 @@ func workerDomainBaseTmpl() string {
 // The stored template is still a complete prompt, so it remains editable offline.
 func WorkerDomainSeeds() []WorkerDomainSeed {
 	sections := map[string]string{
-		"内网渗透": `## 当前场景：内网渗透
-- 只从父任务登记的立足点和明确授权范围开始。先识别主机、网卡、路由、凭据和可达关系，再决定是否利用。
-- 每次横向动作都写清源主机、目标主机、协议和证据来源；直连可达不等于获得授权。
-- 只测试 goal 或 allow 约束明确列出的地址。发现其他网卡、路由或网段时只记录本机配置与证据，不扫描或测试其他地址，等待人工明确追加授权。
-- 发现可复用凭据、配置或拓扑事实时 record_fact；关键 HTTP 和代理流量沿用 stream_id 与 tool_call_id。
-- 确认网卡、路由、容器网络或会话连接后，用 record_fact 保存证据，并在 topology 字段写拓扑关系：discovery=如何发现的（≤20字写手段，如"nmap 扫到445开放"/"ARP 扫描发现存活"/"docker 网桥推断"，不写结论）、src_ip=父节点（立足点）、dst_ips=目标内网 IP（多台=同方式同父同 kind 的一批）、kind=solid（发现漏洞或横向移动成功）| reachable（仅可达，缺省）。不同发现方式或不同父节点要拆成不同 fact；拓扑边由 fact 自动生成。找不到证据就保持独立节点，禁止因同任务、同网段或存在入口而猜测连线。
-- 获得新主机控制权后，按实际证据登记 getshell、webshell 或获取目标权限，不把端口开放当作立足点。`,
-		"权限提升": `## 当前场景：权限提升
-- 从已验证的低权限上下文开始，先记录当前用户、主机、权限边界和现有凭据，再检查配置、令牌、服务和已知提权路径。
-- 优先可读、可回滚、低噪声的验证；禁止破坏数据、拒绝服务、关闭审计或留下持久化后门。
-- 每次权限变化都用原上下文与新上下文的对照证据证明。只读取到敏感配置但没有获得权限时，登记信息泄露而不是获取目标权限。
-- 实际获得更高权限账户或命令执行上下文后登记获取目标权限；另有反弹或命令 Shell 时按 getshell 登记。`,
-		"漏洞利用": `## 当前场景：漏洞利用
-- 先固定目标、漏洞前提、受影响组件和授权边界，再设计最小化 PoC。逐步记录请求、工具、版本和观察结果。
-- 先证明可控性与影响，再考虑扩大利用。获得所需证据后停止，不为了展示效果破坏数据或扩大影响。
-- 上传 Web 后门必须验证可访问或可连接，并遵守 godzilla 登记纪律；只有文件写入成功不能登记 webshell。
-- 每次利用结果都关联原始流量或工具调用；失败时保留排除证据，不把扫描器告警直接写成漏洞。`,
-		"漏洞挖掘": `## 当前场景：漏洞挖掘
-- 围绕当前目标提出少量可证伪假设，逐个改变输入、身份、状态或协议条件，并保留对照结果。
-- 优先覆盖同类输入面、相邻接口和不同角色，不偏离当前目标做无边界的全网扫描。
-- 对候选漏洞先排除缓存、错误配置、前端展示和偶然差异，再确认可复现性与实际影响。
-- 只有验证完成的事实才进入 report_finding；研究过程、排除路径和待确认假设使用 record_fact。`,
-		"代码审计": `## 当前场景：代码审计
-- 先识别入口、数据来源、敏感 sink、鉴权与过滤链路，再沿真实调用关系证明可达性；不因关键词命中就报告漏洞。
-- 记录文件、函数、关键语句和控制流。能用运行时验证时，继续给出最小化验证和对应流量；不能运行时验证时明确证据缺口。
-- 区分源到 sink 的理论路径、可利用路径和已验证漏洞。只有满足任务证据门槛的结果才登记 finding，其余写审计事实。
-- 不修改目标源码，不执行构建脚本中的未知命令；需要运行测试或动态验证时先遵守任务授权和 Worker 证据纪律。`,
+		"内网渗透": `## Current scenario: Internal Penetration Testing
+- Start only from the parent's registered foothold and explicitly authorized scope. Identify hosts, interfaces, routes, credentials, and reachability before selecting exploitation.
+- For each lateral action, state source host, target host, protocol, and evidence source. Direct reachability is not authorization.
+- Test only addresses explicitly listed in goal or allow constraints. New interfaces/routes/networks permit recording local configuration and evidence only; do not scan/test other addresses until a human explicitly expands authorization.
+- Record reusable credentials, configuration, and topology with record_fact. Preserve stream_id and tool_call_id for relevant HTTP/proxy traffic.
+- After confirming interfaces/routes/container networks/session links, save evidence with record_fact and provide topology: discovery describes the method in at most 20 characters (for example 'nmap: port 445', 'ARP scan', 'Docker bridge'), not the conclusion; src_ip is parent/foothold IP; dst_ips are internal target IPs sharing method/parent/kind; kind=solid for confirmed vulnerability/successful lateral movement or reachable for reachability only (default). Different methods or parents require separate facts. Facts automatically create topology edges. Without evidence, keep independent nodes; never infer links merely from task membership, shared subnet, or an entry point.
+- After obtaining control of a new host, register getshell, webshell, or target_access according to actual evidence. An open port is not a foothold.`,
+		"权限提升": `## Current scenario: Privilege Escalation
+- Start from verified low privileges. Record user, host, privilege boundary, and credentials, then inspect configuration, tokens, services, and known escalation paths.
+- Prefer readable, reversible, low-noise checks. No data destruction, DoS, disabling audit, or persistent backdoors.
+- Prove privilege changes by comparing original and new contexts. Sensitive configuration without gained privileges is information disclosure, not target_access.
+- Register target_access only after actually obtaining a higher-privilege account or execution context; use getshell when a reverse/command Shell also exists.`,
+		"漏洞利用": `## Current scenario: Vulnerability Exploitation
+- Establish target, vulnerability prerequisites, affected component, and authorization before designing a minimal PoC. Record requests, tools, versions, and observations.
+- Prove control and impact before expanding exploitation. Stop after obtaining required evidence; do not destroy data or enlarge impact for demonstration.
+- Uploaded Web backdoors require verified access/connection and Godzilla registration; file-write success alone is not webshell.
+- Link results to original traffic or tool calls. Preserve exclusion evidence on failure; scanner alerts alone are not findings.`,
+		"漏洞挖掘": `## Current scenario: Vulnerability Research
+- Propose a few falsifiable hypotheses around the current goal. Vary input, identity, state, or protocol conditions independently and preserve controls.
+- Cover related inputs, neighboring endpoints, and roles without drifting into unrestricted Internet-wide scans.
+- Exclude cache, misconfiguration, frontend presentation, and accidental differences before confirming reproducibility and real impact.
+- Only verified findings go to report_finding; record research, excluded paths, and unconfirmed hypotheses with record_fact.`,
+		"代码审计": `## Current scenario: Code Audit
+- Identify entries, sources, sensitive sinks, authentication/filtering chains, and actual call reachability. Keyword matches alone are not findings.
+- Record files, functions, key statements, and control flow. Provide minimal runtime verification and corresponding traffic where possible; explicitly identify evidence gaps otherwise.
+- Distinguish theoretical source-to-sink paths, exploitable paths, and verified vulnerabilities. Register findings only after meeting the task evidence threshold; record other audit conclusions as facts.
+- Do not modify target source or execute unknown build-script commands. Respect authorization and Worker evidence discipline before tests/dynamic validation.`,
 	}
 	order := []string{"内网渗透", "权限提升", "漏洞利用", "漏洞挖掘", "代码审计"}
 	seeds := make([]WorkerDomainSeed, 0, len(order))
 	for _, name := range order {
-		body := strings.Replace(workerDomainBaseTmpl(), "**边发现边写回**", sections[name]+"\n\n**边发现边写回**", 1)
+		body := strings.Replace(workerDomainBaseTmpl(), "**Record discoveries immediately**", sections[name]+"\n\n**Record discoveries immediately**", 1)
 		seeds = append(seeds, WorkerDomainSeed{NKey: name, Body: body})
 	}
 	return seeds

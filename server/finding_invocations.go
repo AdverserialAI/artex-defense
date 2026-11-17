@@ -18,16 +18,16 @@ import (
 )
 
 func (s *Server) toolDispatchFindingToAgent() actool.CoreTool {
-	desc := "把当前 Planner 任务中的一条 Finding 显式派发给一个已存在、启用且非内置的自定义 Agent。finding_id 是独立漏洞记录 ID（findings.id），不是探索节点 ID finding_node_id。同一 agent_key+finding_id 只记录一次调用；already_invoked 返回首次会话 ID，retry_scheduled 表示尚未创建会话并等待兜底补发。enqueued/retry_scheduled 均不表示下游 Agent 已执行或完成。具体场景允许的目标和证据前提由调用方系统提示词决定。"
+	desc := "Explicitly dispatch a Finding from the current Planner task to an existing, enabled, non-built-in custom Agent. finding_id is the independent finding record ID (findings.id), not the exploration node ID finding_node_id. Each agent_key+finding_id records one invocation; already_invoked returns the first conversation ID, and retry_scheduled means no conversation has been created and fallback delivery is pending. Neither enqueued nor retry_scheduled means the downstream Agent has run or completed. The caller's system prompt defines the scenario's allowed targets and evidence prerequisites."
 	schema := objSchema(map[string]any{
-		"agent_key":  strParam("目标自定义 Agent 的 key"),
-		"finding_id": map[string]any{"type": "integer", "description": "当前任务中的独立漏洞记录 ID（findings.id）"},
-		"reason":     strParam("Planner 确认的证据前提和本次派发原因"),
+		"agent_key":  strParam("Target custom Agent key"),
+		"finding_id": map[string]any{"type": "integer", "description": "Independent finding record ID in the current task (findings.id)"},
+		"reason":     strParam("Evidence prerequisites confirmed by the Planner and reason for this dispatch"),
 	}, "agent_key", "finding_id", "reason")
 	return wrTool("dispatch_finding_to_agent", desc, schema, func(ctx context.Context, in json.RawMessage) (actool.Result, error) {
 		ri := agent.RunInfoFrom(ctx)
 		if ri.TaskID == 0 {
-			return actool.Errorf("缺少 planner 任务上下文"), nil
+			return actool.Errorf("Missing Planner task context"), nil
 		}
 		var args struct {
 			AgentKey  string          `json:"agent_key"`
@@ -41,34 +41,34 @@ func (s *Server) toolDispatchFindingToAgent() actool.CoreTool {
 		args.Reason = strings.TrimSpace(args.Reason)
 		findingID := parseProfileID(args.FindingID)
 		if args.AgentKey == "" || findingID <= 0 || args.Reason == "" {
-			return actool.Errorf("agent_key、有效的 finding_id 和非空 reason 为必填"), nil
+			return actool.Errorf("agent_key, a valid finding_id, and a nonempty reason are required"), nil
 		}
 		finding, err := s.m.pg.GetFinding(findingID)
 		if err != nil {
-			return actool.Errorf("读取 Finding 失败: " + err.Error()), nil
+			return actool.Errorf("Failed to read Finding: " + err.Error()), nil
 		}
 		if finding == nil {
-			return actool.Errorf("finding 不存在"), nil
+			return actool.Errorf("Finding does not exist"), nil
 		}
 		if finding.TaskID == nil || *finding.TaskID != ri.TaskID {
-			return actool.Errorf("finding 不属于当前 planner 任务"), nil
+			return actool.Errorf("Finding does not belong to the current Planner task"), nil
 		}
 		target, err := s.m.pg.GetAgentByKey(args.AgentKey)
 		if err != nil {
-			return actool.Errorf("读取目标 Agent 失败: " + err.Error()), nil
+			return actool.Errorf("Failed to read target Agent: " + err.Error()), nil
 		}
 		if target == nil {
-			return actool.Errorf("目标 Agent 不存在"), nil
+			return actool.Errorf("Target Agent does not exist"), nil
 		}
 		if !target.Enabled {
-			return actool.Errorf("目标 Agent 已禁用"), nil
+			return actool.Errorf("Target Agent is disabled"), nil
 		}
 		if target.Builtin {
-			return actool.Errorf("目标 Agent 不能是内置 Agent"), nil
+			return actool.Errorf("Target Agent must not be built-in"), nil
 		}
 		inv, inserted, err := s.m.pg.RecordFindingInvocation(args.AgentKey, findingID, ri.TaskID, args.Reason)
 		if err != nil {
-			return actool.Errorf("记录 Finding 派发失败: " + err.Error()), nil
+			return actool.Errorf("Failed to record Finding dispatch: " + err.Error()), nil
 		}
 		if !inserted {
 			if inv.ConversationID != nil {
@@ -99,41 +99,41 @@ func (s *Server) toolDispatchFindingToAgent() actool.CoreTool {
 // retry sweep. It revalidates all mutable state before using the trigger queue.
 func (s *Server) enqueueFindingInvocation(inv db.FindingInvocation) (bool, error) {
 	if s.m.pg == nil {
-		return false, errors.New("数据库未初始化")
+		return false, errors.New("Database is not initialized")
 	}
 	finding, err := s.m.pg.GetFinding(inv.FindingID)
 	if err != nil {
-		return false, fmt.Errorf("读取 Finding 失败: %w", err)
+		return false, fmt.Errorf("Failed to read Finding: %w", err)
 	}
 	if finding == nil {
-		return false, errors.New("finding 不存在")
+		return false, errors.New("Finding does not exist")
 	}
 	if finding.TaskID == nil || *finding.TaskID != inv.TaskID {
-		return false, errors.New("finding 与调用记录的任务归属不一致")
+		return false, errors.New("Finding and invocation record belong to different tasks")
 	}
 	task, err := s.m.pg.GetTask(inv.TaskID)
 	if err != nil {
-		return false, fmt.Errorf("读取任务失败: %w", err)
+		return false, fmt.Errorf("Failed to read task: %w", err)
 	}
 	if task == nil {
-		return false, errors.New("任务不存在")
+		return false, errors.New("Task does not exist")
 	}
 	target, err := s.m.pg.GetAgentByKey(inv.AgentKey)
 	if err != nil {
-		return false, fmt.Errorf("读取目标 Agent 失败: %w", err)
+		return false, fmt.Errorf("Failed to read target Agent: %w", err)
 	}
 	if target == nil {
-		return false, errors.New("目标 Agent 不存在")
+		return false, errors.New("Target Agent does not exist")
 	}
 	if !target.Enabled {
-		return false, errors.New("目标 Agent 已禁用")
+		return false, errors.New("Target Agent is disabled")
 	}
 	if target.Builtin {
-		return false, errors.New("目标 Agent 不能是内置 Agent")
+		return false, errors.New("Target Agent must not be built-in")
 	}
 	triggers, err := s.m.pg.ListTriggersFor(inv.AgentKey)
 	if err != nil {
-		return false, fmt.Errorf("读取目标 Agent 触发配置失败: %w", err)
+		return false, fmt.Errorf("Failed to read target Agent trigger configuration: %w", err)
 	}
 	triggerMessage := ""
 	for _, tr := range triggers {
@@ -154,10 +154,10 @@ func (s *Server) enqueueFindingInvocation(inv db.FindingInvocation) (bool, error
 		message.WriteString(triggerMessage)
 		message.WriteString("\n\n")
 	}
-	fmt.Fprintf(&message, "【本次由 planner 确认处置前提后显式派发】\nexecution_mode: %s\nFindingID: %d\nVulnClass: %s\nSeverity: %s\nSummary: %s\nAssetIDs: %s\nEvidenceVersion: %d\nPlannerReason: %s\nFindingEvidence: %s",
+	fmt.Fprintf(&message, "[Explicit dispatch after the Planner confirmed handling prerequisites]\nexecution_mode: %s\nFindingID: %d\nVulnClass: %s\nSeverity: %s\nSummary: %s\nAssetIDs: %s\nEvidenceVersion: %d\nPlannerReason: %s\nFindingEvidence: %s",
 		mode, finding.ID, finding.VulnClass, finding.Severity, trunc(finding.Summary, 1000), assetIDs,
 		finding.EvidenceVersion, trunc(inv.Reason, 2000), trunc(finding.Evidence, 12000))
-	title := fmt.Sprintf("planner finding 派发 · task#%d · finding#%d", inv.TaskID, inv.FindingID)
+	title := fmt.Sprintf("Planner finding dispatch · task#%d · finding#%d", inv.TaskID, inv.FindingID)
 	return s.startTriggeredRun(inv.AgentKey, title, message.String(), inv.TaskID, true, task.Description, task.Goal,
 		[]findingInvocationRef{{agentKey: inv.AgentKey, findingID: inv.FindingID}}), nil
 }

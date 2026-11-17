@@ -90,14 +90,14 @@ FROM exploration_nodes WHERE id=$1 AND exploration_id=$2 FOR UPDATE`,
 		isRejected := state == "proposed" && strOf(p["executor"]) == "review" && reviewStatus == "rejected"
 		if state != "open" && !isRejected {
 			if state == "proposed" {
-				return fmt.Errorf("%w: 意图 #%d 正在审核中（pending），等审核结论或先驳回", ErrIntentNotEditable, id)
+				return fmt.Errorf("%w: intent #%d is under review (pending); wait for a decision or reject it first", ErrIntentNotEditable, id)
 			}
 			return fmt.Errorf("%w: intent #%d state=%s", ErrIntentNotEditable, id, state)
 		}
 
 		// ── 3. 版本 CAS ──
 		if expectedVersion != curVersion {
-			return fmt.Errorf("%w: expected=%d current=%d（先 list_intents 取最新 content_version）",
+			return fmt.Errorf("%w: expected=%d current=%d (call list_intents for the latest content_version)",
 				ErrStaleVersion, expectedVersion, curVersion)
 		}
 
@@ -117,7 +117,7 @@ WHERE exploration_id=$1 AND src_id=$2 AND rel IN ('yields','spawns'))`,
 		if patch.Summary != nil {
 			ns := strings.TrimSpace(*patch.Summary)
 			if ns == "" {
-				return fmt.Errorf("summary 不能为空")
+				return fmt.Errorf("summary is required")
 			}
 			if ns != strOf(p["summary"]) {
 				p["summary"] = ns
@@ -142,7 +142,7 @@ WHERE exploration_id=$1 AND src_id=$2 AND rel IN ('yields','spawns'))`,
 			if !isRejected {
 				// open 意图不经过审核链，pending_executor 对它永远是死字段（批准转正只发生在
 				// proposed 稿）——明确拒绝，避免静默写入产生误导（审核员报告 P2-13）。
-				return fmt.Errorf("open 意图无审核链，target_executor 无意义（执行器由送审/批准确定）")
+				return fmt.Errorf("Open intents have no review chain; target_executor is not applicable (executor is determined by submission/approval)")
 			}
 			te := strings.TrimSpace(*patch.TargetExecutor)
 			if te != strOf(p["pending_executor"]) {
@@ -169,7 +169,7 @@ WHERE exploration_id=$1 AND src_id=$2 AND rel IN ('yields','spawns'))`,
 		}
 		if len(changed) == 0 {
 			if isRejected {
-				return fmt.Errorf("%w: 驳回稿必须修改内容后才能重送审核", ErrNoChange)
+				return fmt.Errorf("%w: rejected drafts must be edited before resubmission for review", ErrNoChange)
 			}
 			// open 稿无变化：不推版本、不写审计，直接返回现状（§8.2）。
 			out = &IntentUpdate{ID: id, State: state, ReviewStatus: reviewStatus,
@@ -215,8 +215,8 @@ WHERE id=$1 AND exploration_id=$2`, id, s.expID, string(newPayload), newPriority
 		if _, err := tx.Exec(`INSERT INTO activity(exploration_id, node_id, worker, kind, summary, detail)
 VALUES ($1,$2,NULLIF($3,''),'text',$4,$5)`,
 			s.expID, id, auditWorker,
-			fmt.Sprintf("意图 #%d 已修订（%s）%s", id, strings.Join(changed, ","),
-				map[bool]string{true: "，已重送审核", false: ""}[reviewReset]),
+			fmt.Sprintf("Intent #%d revised (%s)%s", id, strings.Join(changed, ","),
+				map[bool]string{true: "; resubmitted for review", false: ""}[reviewReset]),
 			string(detail)); err != nil {
 			return err
 		}
@@ -260,17 +260,17 @@ WHERE id=$1 AND exploration_id=$2 AND kind='intent' FOR UPDATE`,
 		switch state {
 		case "open", "proposed": // 待领/待审/驳回稿都可取消（§9.1）
 		case "running", "paused":
-			return fmt.Errorf("%w: 意图 #%d 正在执行（state=%s），请先用 control_work 停止执行再取消",
+			return fmt.Errorf("%w: intent #%d is executing (state=%s); stop execution with control_work before cancelling",
 				ErrIntentNotEditable, id, state)
 		default:
 			return fmt.Errorf("%w: intent #%d state=%s", ErrIntentNotEditable, id, state)
 		}
 		if expectedVersion != curVersion {
-			return fmt.Errorf("%w: expected=%d current=%d（先 list_intents 取最新 content_version）",
+			return fmt.Errorf("%w: expected=%d current=%d (call list_intents for the latest content_version)",
 				ErrStaleVersion, expectedVersion, curVersion)
 		}
 		if strings.TrimSpace(reason) == "" {
-			reason = "planner 主动取消"
+			reason = "Cancelled by planner"
 		}
 		if _, err := tx.Exec(`UPDATE exploration_nodes
 SET state='deleted', delete_reason=$3, blocked_reason=NULL,

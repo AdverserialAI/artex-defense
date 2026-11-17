@@ -41,35 +41,35 @@ func decodeTaskCategoryRequest(w http.ResponseWriter, r *http.Request) (*taskCat
 	}
 	hasPreset := request.DefaultReviewEnabled != nil || request.DefaultPlannerTemplateID != nil || request.DefaultWorkerTemplateID != nil || request.AssetMode != nil || request.DefaultDescription != nil || request.SeedFirstIntent != nil || request.SeedExecutor != nil
 	if request.Name == nil && !hasPreset {
-		writeErr(w, http.StatusBadRequest, "至少需要提供 name 或预设字段")
+		writeErr(w, http.StatusBadRequest, "Provide at least name or a preset field")
 		return nil, false
 	}
 	if request.Name != nil {
 		if strings.TrimSpace(*request.Name) == "" {
-			writeErr(w, http.StatusBadRequest, "分类名称不能为空")
+			writeErr(w, http.StatusBadRequest, "Category name is required")
 			return nil, false
 		}
 		if utf8.RuneCountInString(strings.TrimSpace(*request.Name)) > db.MaxTaskCategoryNameRunes {
-			writeErr(w, http.StatusBadRequest, "分类名称最多 80 个字符")
+			writeErr(w, http.StatusBadRequest, "Category name must not exceed 80 characters")
 			return nil, false
 		}
 	}
 	if request.AssetMode != nil {
 		normalized := strings.ToLower(strings.TrimSpace(*request.AssetMode))
 		if len(normalized) > 64 {
-			writeErr(w, http.StatusBadRequest, "asset_mode 最多 64 字符")
+			writeErr(w, http.StatusBadRequest, "asset_mode must not exceed 64 characters")
 			return nil, false
 		}
 		request.AssetMode = &normalized
 	}
 	if request.DefaultDescription != nil && utf8.RuneCountInString(*request.DefaultDescription) > 500 {
-		writeErr(w, http.StatusBadRequest, "默认描述最多 500 个字符")
+		writeErr(w, http.StatusBadRequest, "Default description must not exceed 500 characters")
 		return nil, false
 	}
 	if request.SeedExecutor != nil {
 		trimmed := strings.TrimSpace(*request.SeedExecutor)
 		if len(trimmed) > 64 {
-			writeErr(w, http.StatusBadRequest, "种子执行器最多 64 字符")
+			writeErr(w, http.StatusBadRequest, "Seed executor must not exceed 64 characters")
 			return nil, false
 		}
 		request.SeedExecutor = &trimmed
@@ -82,7 +82,7 @@ func writeTaskCategoryError(w http.ResponseWriter, err error) {
 	case errors.Is(err, db.ErrTaskCategoryInvalid):
 		writeErr(w, http.StatusBadRequest, err.Error())
 	case errors.Is(err, db.ErrTaskCategoryNameConflict):
-		writeErr(w, http.StatusConflict, "分类名称已存在")
+		writeErr(w, http.StatusConflict, "Category name already exists")
 	case errors.Is(err, db.ErrTaskCategoryNotFound), errors.Is(err, db.ErrTaskCategoryTaskNotFound):
 		writeErr(w, http.StatusNotFound, err.Error())
 	default:
@@ -144,7 +144,7 @@ func (s *Server) pgRenameTaskCategory(w http.ResponseWriter, r *http.Request) {
 		if request.SeedExecutor != nil && *request.SeedExecutor != "" {
 			ea, eaErr := s.m.PG().GetAgentByExecutorKey(*request.SeedExecutor)
 			if eaErr != nil || ea == nil || !ea.Enabled || ea.Builtin {
-				writeErr(w, http.StatusBadRequest, fmt.Sprintf("种子执行器 %q 不可用（须为已启用自定义 agent 的 executor_key）", *request.SeedExecutor))
+				writeErr(w, http.StatusBadRequest, fmt.Sprintf("Seed executor %q is unavailable (must be the executor_key of an enabled custom agent)", *request.SeedExecutor))
 				return
 			}
 		}
@@ -194,7 +194,7 @@ func parseCategoryIDField(w http.ResponseWriter, raw json.RawMessage) (*int64, b
 	}
 	var id int64
 	if err := json.Unmarshal(raw, &id); err != nil || id <= 0 {
-		writeErr(w, http.StatusBadRequest, "任务分类 id 无效")
+		writeErr(w, http.StatusBadRequest, "Invalid task category ID")
 		return nil, false
 	}
 	return &id, true
@@ -250,7 +250,7 @@ func (s *Server) updateTasksCategoryBatch(w http.ResponseWriter, r *http.Request
 	}
 	taskIDs := normalizeBatchTaskIDs(request.TaskIDs)
 	if len(taskIDs) == 0 || len(taskIDs) > db.MaxTaskCategoryBatchSize {
-		writeErr(w, http.StatusBadRequest, fmt.Sprintf("task_ids 数量必须为 1-%d", db.MaxTaskCategoryBatchSize))
+		writeErr(w, http.StatusBadRequest, fmt.Sprintf("task_ids must contain 1–%d entries", db.MaxTaskCategoryBatchSize))
 		return
 	}
 	items := make([]batchCategoryItem, 0, len(taskIDs))

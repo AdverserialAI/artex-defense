@@ -63,7 +63,7 @@ func (d *DB) RecordFindingInvocation(agentKey string, findingID, taskID int64, r
 		return FindingInvocation{}, false, err
 	}
 	if inv == nil {
-		return FindingInvocation{}, false, errors.New("finding_agent_invocations 行在冲突读取时消失")
+		return FindingInvocation{}, false, errors.New("finding_agent_invocations row disappeared during conflict lookup")
 	}
 	return *inv, false, nil
 }

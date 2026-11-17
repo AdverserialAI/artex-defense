@@ -191,14 +191,14 @@ func (sc *Scheduler) fireIntervals(triggers []*db.AgentTrigger) {
 			continue
 		}
 		_ = sc.pg.TouchTriggerFire(tr.ID)
-		ctx := "\n\n【本次为定时触发】" + now.Format(" 2006-01-02 15:04:05 MST")
-		sc.s.StartTriggeredRun(tr.AgentKey, fmt.Sprintf("定时触发 · %s", now.Format("15:04")), tr.IntervalMessage+ctx, 0, false, "", "")
+		ctx := "\n\n[Scheduled trigger]" + now.Format(" 2006-01-02 15:04:05 MST")
+		sc.s.StartTriggeredRun(tr.AgentKey, fmt.Sprintf("Scheduled trigger · %s", now.Format("15:04")), tr.IntervalMessage+ctx, 0, false, "", "")
 	}
 }
 
 func findingTriggerContext(e db.TaskEvent) string {
 	mode := agent.ExecutionModeFromGoal(e.TaskGoal + "\n" + e.TaskDesc)
-	ctx := fmt.Sprintf("\n\n【本次由任务发现 finding 触发】\n执行模式: %s\n发现: [%s/%s] %s",
+	ctx := fmt.Sprintf("\n\n[Triggered by a task finding]\nExecution mode: %s\nFinding: [%s/%s] %s",
 		mode, e.VulnClass, e.Severity, e.Summary)
 	if e.FindingID > 0 {
 		ctx += fmt.Sprintf("\nfinding_id: %d", e.FindingID)
@@ -234,8 +234,8 @@ func (sc *Scheduler) fireFindings(triggers []*db.AgentTrigger) {
 		msgCtx := findingTriggerContext(e)
 		for _, tr := range want {
 			// 【二开·P-LOG·O2】INFO 记命中（排障：finding 触发了哪个 agent）。
-			log.Printf("[scheduler] finding 触发命中：agent %s ← task#%d node#%d [%s/%s]", tr.AgentKey, e.TaskID, e.NodeID, e.VulnClass, e.Severity)
-			sc.s.StartTriggeredRun(tr.AgentKey, fmt.Sprintf("finding 触发 · task#%d", e.TaskID), tr.FindingMessage+msgCtx, e.TaskID, true, e.TaskDesc, e.TaskGoal)
+			log.Printf("[scheduler] finding trigger matched: agent %s ← task#%d node#%d [%s/%s]", tr.AgentKey, e.TaskID, e.NodeID, e.VulnClass, e.Severity)
+			sc.s.StartTriggeredRun(tr.AgentKey, fmt.Sprintf("Finding trigger · task#%d", e.TaskID), tr.FindingMessage+msgCtx, e.TaskID, true, e.TaskDesc, e.TaskGoal)
 		}
 	}
 	_ = sc.pg.SetSchedState(schedKeyLastFinding, strconv.FormatInt(maxID, 10))
@@ -266,9 +266,9 @@ func (sc *Scheduler) fireGoals(triggers []*db.AgentTrigger) {
 		if len(want) == 0 {
 			continue
 		}
-		msgCtx := fmt.Sprintf("\n\n【本次由任务完成目标触发】\n达成目标: %s", e.Summary)
+		msgCtx := fmt.Sprintf("\n\n[Triggered by task goal completion]\nAchieved goal: %s", e.Summary)
 		for _, tr := range want {
-			sc.s.StartTriggeredRun(tr.AgentKey, fmt.Sprintf("目标触发 · task#%d", e.TaskID), tr.GoalMessage+msgCtx, e.TaskID, true, e.TaskDesc, e.TaskGoal)
+			sc.s.StartTriggeredRun(tr.AgentKey, fmt.Sprintf("Goal trigger · task#%d", e.TaskID), tr.GoalMessage+msgCtx, e.TaskID, true, e.TaskDesc, e.TaskGoal)
 		}
 	}
 	if changed {
@@ -299,9 +299,9 @@ func (sc *Scheduler) fireTaskTimeouts(triggers []*db.AgentTrigger) {
 		if len(want) == 0 {
 			continue
 		}
-		msgCtx := "\n\n【本次由任务超时触发】"
+		msgCtx := "\n\n[Triggered by task timeout]"
 		for _, tr := range want {
-			sc.s.StartTriggeredRun(tr.AgentKey, fmt.Sprintf("超时触发 · task#%d", e.TaskID), tr.TaskTimeoutMessage+msgCtx, e.TaskID, true, e.TaskDesc, e.TaskGoal)
+			sc.s.StartTriggeredRun(tr.AgentKey, fmt.Sprintf("Timeout trigger · task#%d", e.TaskID), tr.TaskTimeoutMessage+msgCtx, e.TaskID, true, e.TaskDesc, e.TaskGoal)
 		}
 	}
 	_ = sc.pg.SetSchedState(schedKeyLastTimeout, strconv.FormatInt(maxID, 10))
@@ -330,12 +330,12 @@ func (sc *Scheduler) fireTaskCreates(triggers []*db.AgentTrigger) {
 		if len(want) == 0 {
 			continue
 		}
-		msgCtx := "\n\n【本次由任务创建触发】"
+		msgCtx := "\n\n[Triggered by task creation]"
 		for _, tr := range want {
 			if e.PreAgent != "" {
 				a, err := sc.pg.GetAgentByKey(tr.AgentKey)
 				if err != nil {
-					log.Printf("[scheduler] task#%d pre_agent 触发去重查询失败: %v", e.TaskID, err)
+					log.Printf("[scheduler] task#%d pre_agent trigger deduplication query failed: %v", e.TaskID, err)
 					continue
 				}
 				if a != nil && a.ExecutorKey == e.PreAgent {
@@ -343,7 +343,7 @@ func (sc *Scheduler) fireTaskCreates(triggers []*db.AgentTrigger) {
 					continue
 				}
 			}
-			sc.s.StartTriggeredRun(tr.AgentKey, fmt.Sprintf("任务创建触发 · task#%d", e.TaskID), tr.TaskCreateMessage+msgCtx, e.TaskID, true, e.TaskDesc, e.TaskGoal)
+			sc.s.StartTriggeredRun(tr.AgentKey, fmt.Sprintf("Task creation trigger · task#%d", e.TaskID), tr.TaskCreateMessage+msgCtx, e.TaskID, true, e.TaskDesc, e.TaskGoal)
 		}
 	}
 	_ = sc.pg.SetSchedState(schedKeyLastTaskCreate, strconv.FormatInt(maxID, 10))
@@ -382,13 +382,13 @@ func (sc *Scheduler) fireToolCalls(triggers []*db.AgentTrigger) {
 		if e.ToolIsErr {
 			errTag = "[error] "
 		}
-		msgCtx := fmt.Sprintf("\n\n【本次由工具调用触发】\n工具: %s\n入参: %s\n返回: %s%s",
+		msgCtx := fmt.Sprintf("\n\n[Triggered by a tool call]\nTool: %s\nInput: %s\nResult: %s%s",
 			e.Tool, trunc(e.ToolInput, 1500), errTag, trunc(e.ToolOutput, 1500))
 		for _, tr := range want {
 			if !containsFold(tr.ToolNames, e.Tool) {
 				continue
 			}
-			sc.s.StartTriggeredRun(tr.AgentKey, fmt.Sprintf("工具触发 · %s · task#%d", e.Tool, e.TaskID), tr.ToolCallMessage+msgCtx, e.TaskID, true, e.TaskDesc, e.TaskGoal)
+			sc.s.StartTriggeredRun(tr.AgentKey, fmt.Sprintf("Tool trigger · %s · task#%d", e.Tool, e.TaskID), tr.ToolCallMessage+msgCtx, e.TaskID, true, e.TaskDesc, e.TaskGoal)
 		}
 	}
 	_ = sc.pg.SetSchedState(schedKeyLastToolCall, strconv.FormatInt(maxID, 10))
@@ -410,7 +410,7 @@ func trunc(s string, max int) string {
 	if len(r) <= max {
 		return s
 	}
-	return string(r[:max]) + fmt.Sprintf("…(已截断,共 %d 字)", len(r))
+	return string(r[:max]) + fmt.Sprintf("…(truncated; %d characters total)", len(r))
 }
 
 func (sc *Scheduler) mustState(key string) string {

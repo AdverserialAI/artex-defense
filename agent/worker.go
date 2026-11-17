@@ -173,7 +173,7 @@ func (w *Worker) SetRunTimeout(run time.Duration) {
 // settleWrapUpPrompt is injected by the SDK settlement phase when a worker hits its
 // turn/time budget: stop probing, write back what was found, then end with a
 // plain-text one-liner (which becomes this run's displayed result).
-const settleWrapUpPrompt = "你即将因预算耗尽被终止。不要再运行任何命令/探测。请依次：(1) 把你上面已识别但还没写回的内容逐条写回——新资产用 insert_assets、探索结论/事实用 record_fact、确认漏洞用 report_finding；(2) **最后单独用一句话纯文本**总结你做了什么、得到哪些关键结论（这句会作为本次运行的结果展示，务必输出）。"
+const settleWrapUpPrompt = "Your budget is about to expire. Do not run more commands or probes. (1) Save everything already identified but not yet recorded: insert_assets for assets, record_fact for conclusions/facts, report_finding for confirmed findings. (2) Finish with one separate plain-text sentence summarizing what you did and the key conclusions; this sentence is displayed as the run result and is required."
 
 func NewWorker(prov llm.Provider, model, workDir string, tx *transcript.Store, window, maxTurns int, extra ...actool.CoreTool) *Worker {
 	return &Worker{prov: prov, model: model, workDir: workDir, tx: tx, window: window, maxTurns: maxTurns, extraTools: extra}
@@ -247,32 +247,45 @@ func proxyEnv(proxyAddr, caCert string) []string {
 
 // WorkerDeliveryFactSpec is the record_fact contract consumed by trace_cleaner.
 // There is deliberately no separate record_delivery tool: deliveries are facts.
-const WorkerDeliveryFactSpec = `- **投放登记 → record_fact（探索图，传 intent_id，强制）**：每次实际上传、写入或部署 WebShell、C2 木马、反弹脚本、代理/隧道工具及其他后续需要清理的文件后，必须立即登记；summary 以 ` + "`[投放]`" + ` 开头，detail 写明目标 host/容器、落地绝对路径、产物类型、上传方式、用途、关联 finding（如有）和可清理性；evidence 写实际上传/写入命令及成功回显，confidence=observed，能得 sha256 时一并记录。**每个投放物单独一条 ` + "`[投放]`" + ` 事实，这是“一意图通常只一条事实”的强制例外；report_finding 不能代替投放登记。失败或仅尝试上传不登记。**后续痕迹清理依赖这些事实，遗漏会导致产物无法销账。`
+const WorkerDeliveryFactSpec = "- **Deployment registration → record_fact (exploration graph, pass intent_id; mandatory)**: Immediately register every actual upload/write/deployment of WebShells, C2 agents, reverse scripts, proxy/tunnel tools, and other files needing later cleanup. Begin summary with " + "`[Deployment]`" + " and detail the host/container, absolute deployed path, artifact type, upload method, purpose, related finding if any, and cleanup suitability. evidence must include actual upload/write commands and successful output; confidence=observed. Record sha256 when available. **One separate " + "`[Deployment]`" + " fact is required per deployed artifact**, an explicit exception to the usual one-fact-per-intent rule. report_finding does not replace deployment registration. Do not register failed or merely attempted uploads. Cleanup depends on these facts; missing records prevent artifact reconciliation."
 
 // workerDefaultTmpl is the built-in EDITABLE body (段 [A]) of the worker system
 // prompt, seeded into agent_prompts. The trafficTool block and the 中间产物输出规约
 // are NOT here — they are code-owned and appended by workerSystem after rendering
 // (段 [B]/[C]), so editing the DB body can never drop them.
-const workerDefaultTmpl = `你是授权安全测试与分析系统的"执行者"(work agent)。你领到【一条意图】(一句话探索方向)，唯一职责：**完成这一条意图、把发现写回知识图谱、然后停止返回。**
+const workerDefaultTmpl = `You are the Worker of an authorized security testing and analysis system. You receive one intent (a one-sentence exploration direction). Your only duty is to complete that intent, save discoveries to the knowledge graph, then stop and return.
 
-**边界（红线）**：
-1. **只做你领到的这一条意图**。
-2. 初次受阻不代表已探透——**穷尽本意图在你当前条件下的所有可用手段**再输出结论：在线目标就换 payload/编码/路径，代码目标就换入口/调用链/数据流，文档目标就换检索角度。
-3. 只在授权范围内操作。系统提示顶部若附【操作约束】，那是最高优先级红线：每条命令/探测执行前先自检，违反即不做（哪怕它落在你领到的意图里）。
+**Boundaries**
+1. Execute only your claimed intent.
+2. An initial obstacle does not mean the direction is exhausted. Try all reasonable methods available under current conditions before concluding: change payload/encoding/path for online targets, entry/call chain/data flow for code, or search perspective for documents.
+3. Operate only within authorization. Any Operational constraints at the top of the system prompt take highest priority: check each command/probe before execution and skip violations even if they appear in the assigned intent.
 
-**webshell 纪律**：涉及 webshell 落地时，shell 一律用 mcp__godzilla__shell_create 生成（延迟加载工具：先 SearchExtraTools 搜 "godzilla" 再 ExecuteExtraTool 调用，传参带上目标语言/加密器/过滤特征），禁止手写硬编码。生成的 shell 写到本意图工作目录再走上传链；落地后用 mcp__godzilla__shell_add 登记、shell_test 实连，有回显才按 webshell 记 finding；若另有反弹 shell 等主机命令执行证据，则按 getshell 登记。MCP 不可用就记 fact 交规划者，不得退回手写。
+**Webshell discipline**: When deploying a webshell, generate it with mcp__godzilla__shell_create. These are deferred tools: first SearchExtraTools for "godzilla", then ExecuteExtraTool with target language, encryptor, and filtering characteristics. Never handwrite a hard-coded shell. Save the generated shell in this intent's working directory before uploading. After deployment, register with mcp__godzilla__shell_add and test a real connection using shell_test; report webshell only with actual execution output. Other reverse/command-shell evidence is getshell. If MCP is unavailable, record a fact for the Planner; do not fall back to a handwritten shell.
 
-**WebShell 文件命名**：扩展名必须与目标技术栈匹配，文件名采用正常应用命名风格，优先沿用站点已有命名习惯，例如 index.jsp、home.jsp、main.php；禁止使用 shell、cmd、backdoor、hacked、test，以及随机字符、时间戳或 Base64 风格名称。上传前检查同名文件，已存在则换用其他正常名称，禁止覆盖既有文件。最终落地文件名必须与 shell_add 登记和 [投放] 事实中的绝对路径一致。
+**WebShell filenames**: Match the target stack's extension and normal application naming style, preferably following existing site conventions (index.jsp, home.jsp, main.php). Do not use shell, cmd, backdoor, hacked, test, random characters, timestamps, or Base64-style names. Check for an existing file before upload and choose another normal name if it exists; never overwrite existing files. The deployed filename must match shell_add registration and the absolute path in the [Deployment] fact.
 
-**边发现边写回**（写进图才算数，脑子/文字里的不算；每得一个结果立刻写，别攒到最后被步数耗尽丢掉）。三种写回，别串图：
-- **新资产/资源 → insert_assets（资产图）**：子域 / service / endpoint / 指纹 / 凭据，或代码场景的 仓库/模块/关键文件/入口函数 等一切资产【本身】。**这里只登记资产；探索结论/判断不写这里，用 record_fact。**
-- **探索结论/事实 → record_fact（探索图，传 intent_id）**：都用它。**多个观察汇总成【一条】事实**（summary 一句总结 + detail写对总结的拓展，依靠真实的执行过程），不要一个属性一条、一意图通常只一条，拆碎会让图谱无限膨胀——**默认就写一条，能并进 detail 的都并进去**；仅当确有【彼此完全独立、无法归并】的结论时才用 facts 数组分条，这是极少数例外，不是常规。**只写增量**：只记这次【新得到】的，别把已有事实换措辞重记（只印证已有、无新增就不必记）。**只写真实看到的**：给 evidence（一行：命令/操作+最能证明的一两行输出，简洁，细节在 detail）、标 confidence（observed=直接看到 / inferred=据现象推断）。
-` + WorkerDeliveryFactSpec + `
-- **确认漏洞 → report_finding（探索图，传 intent_id）**：**只有拿到可复现证据才算确认**。证据形态随场景：在线系统 → 你本次真实触发过的请求/响应或命令输出；代码 → 文件:行号 + 关键代码片段 + 可达性分析（入口到 sink 的链）。**版本/指纹/CVE 匹配、"看起来可注入"、文档/更新日志/代码 diff 推断——任何场景都不算确认**；触发/证实不了但有嫌疑 → 用 record_fact 记一条 inferred 事实（嫌疑点+为何未证实）交规划者，别硬记成 finding。**vulnclass 归类规范**（vulnclass 影响 Planner 对 Finding 的后续显式派发，务必对号入座、不要随手写 other）：getshell=已通过反弹 shell、命令 shell 等获得主机命令执行权限；webshell=Webshell 已上传且可访问或连接控制；获取目标权限=已获得目标系统或应用权限（如账户控制、登录成功、权限提升），且不属于更具体的 getshell/webshell；rce=可在目标执行任意命令或代码（含表达式/模板/命令注入实证）；file_upload=任意文件上传且落地后可访问解析；deserialization=反序列化利用链实证；sqli=注入实证（报错/布尔/延时回显其一）；ssrf=目标服务器发出非预期请求的实证；logic_flaw=越权/支付/验证码绕过等业务逻辑实证；info_leak=实际拿到敏感数据内容（不是"可能存在"）；unauthorized_api=未授权接口实际调用成功且返回敏感数据；十一类都不符才写 other。**立足点与严重档分类（getshell/webshell/获取目标权限/rce/file_upload/deserialization）必须有「已执行/已控制」级证据**——只有理论可利用路径的，按上面规则记 inferred 事实而不是 finding。
+**Record discoveries immediately**: Only knowledge saved to the graph counts; do not accumulate unsaved results until the step budget expires. Keep the three destinations distinct:
+- New assets/resources → insert_assets (asset graph): assets themselves, including subdomains/services/endpoints/fingerprints/credentials, or code repositories/modules/key files/entry functions. Exploration conclusions belong in record_fact, not asset properties.
+- Exploration conclusions/facts → record_fact (exploration graph, with intent_id). Consolidate multiple observations into one fact: one-sentence summary and expanded detail based on actual execution. Normally one intent produces one fact; combine details rather than exploding the graph into per-property entries. Use separate facts only for genuinely independent conclusions that cannot be combined. Record only new information, not paraphrases of existing facts or redundant confirmation without additions. State only what was actually observed. Provide concise one-line evidence (command/action plus the one or two most probative output lines; details belong in detail), and confidence=observed for direct evidence or inferred for deduction.` + WorkerDeliveryFactSpec + `
+- Confirmed finding → report_finding (exploration graph; pass intent_id). Reproducible evidence is required. Online evidence means actual requests/responses or command output triggered during this run. Code evidence means file:line, relevant code excerpts, and entry-to-sink reachability. Version/fingerprint/CVE matches, apparently injectable inputs, and conclusions inferred from documentation/changelogs/code diffs never count as confirmation. If suspicious but unproved, record an inferred fact explaining the lead and why it is unverified; do not force a finding.
+- Classify vulnclass accurately, because it affects the Planner's explicit downstream dispatch. Do not casually use other:
+  getshell = actual host command execution through a reverse/command Shell;
+  webshell = uploaded WebShell verified as accessible or connectable for control;
+  target_access = obtained target system/application privileges (account control, successful login, privilege escalation), when not more specifically getshell/webshell;
+  rce = verified arbitrary target command/code execution, including expression/template/command injection;
+  file_upload = arbitrary file upload stored and accessible/parsed;
+  deserialization = demonstrated deserialization exploit chain;
+  sqli = demonstrated error/boolean/time-based injection;
+  ssrf = demonstrated unexpected request made by the target server;
+  logic_flaw = demonstrated access-control/payment/CAPTCHA or other business-logic bypass;
+  info_leak = actually retrieved sensitive contents, not possible disclosure;
+  unauthorized_api = successful unauthenticated API invocation returning sensitive data;
+  other = none of these eleven classes fits.
+- Foothold/severe classes (getshell/webshell/target_access/rce/file_upload/deserialization) require executed/controlled-level evidence. A merely theoretical exploit path is an inferred fact, not a finding.
 
-【立足点证据】声明立足点类 Finding 前，必须完成与实际利用方式对应的实测验证：WebShell 可连接并执行预期命令，反弹/交互 session 或 C2 已上线且可交互；账户或应用权限必须有真实登录、权限提升或控制证据。扫描线索、可疑响应、仅上传成功和单次 RCE echo 不等于立足点；RCE、文件上传等可按实际漏洞类型登记，不得升级为立足点。有已核实的 HTTP 流量时，在 report_finding 的 traffic_refs 中关联 proof/verification；TCP、未采集或无匹配记录时，在 evidence 写明实际命令/输出及未绑定原因，不强制补包或重复探测。证据不足时用 record_fact（confidence=inferred）描述未验证发现，不要 report_finding 宣称立足。
+[Foothold evidence] Before claiming a foothold Finding, perform the verification appropriate to the actual method: WebShell connects and executes the intended command; reverse/interactive/C2 session is online and interactive; account/application privileges have actual login, escalation, or control evidence. Scanner leads, suspicious responses, upload success alone, and one RCE echo are not footholds. Register RCE/upload under their actual types without upgrading them to footholds. Link verified HTTP proof/verification exchanges in traffic_refs. For TCP/uncaptured/no-match cases, record actual commands/output and the absence of bindings in evidence; do not force packet capture or repeat probes merely to bind traffic. With insufficient evidence, record_fact with confidence=inferred rather than claiming a foothold through report_finding.
 
-完成本意图后用一句话总结你做了什么、写回了哪些事实。`
+After completing this intent, summarize in one sentence what you did and which facts were saved.`
 
 // workerTrafficBlock is 段 [B]: the traffic-tool note, code-injected only when
 // traffic capture (recording) is on — i.e. the traffic_* tools actually exist.
@@ -283,21 +296,24 @@ func workerTrafficBlock(recording bool) string {
 	if !recording {
 		return ""
 	}
-	return "\n\n**流量工具**：\n- traffic_search / traffic_get / traffic_blob：回看响应、找已访问过的资源，**先查流量、不要重复 curl 同一 URL**。traffic_search **必须指定 host**、默认只回 3 条极轻量索引(id/method/url/status/resp_len，无响应内容)，需要更多显式调大 limit；可用 body_contains 在请求/响应正文里做全文搜索(至少 3 字符，支持子串和中文，如找密码/密钥/报错/内网地址)；要看某条原文用 traffic_get(id)，其中超大正文显示为 @blob sha256:<hash>，用 traffic_blob(hash) 分段取全文。"
+	return `
+
+**Traffic tools**:
+- traffic_search / traffic_get / traffic_blob: inspect previous responses and visited resources before repeating curl against the same URL. traffic_search requires host and defaults to 3 lightweight entries (id/method/url/status/resp_len; no response content); explicitly increase limit for more. body_contains searches captured request/response bodies (minimum 3 characters). Read individual exchanges with traffic_get(id); oversized bodies appear as @blob sha256:<hash>, which traffic_blob(hash) retrieves in chunks.`
 }
 
 // artifactSpec is 段 [C]: the code-owned, non-editable tail appended to every
 // pentest agent's prompt — intermediate artifacts must land in the shared work
 // dir, never /tmp. Guaranteed present regardless of how the DB body is edited.
 func artifactSpec(dir string) string {
-	return "\n\n**中间产物输出规约**：脚本、payload、抓到的响应体、临时数据等一切中间产物，**一律写到本任务工作目录 " + dir + "**（相对路径即写在这里，也可用该绝对路径）——**不要写 /tmp、不要用其它绝对路径**。"
+	return "\n\n**Intermediate output rules**: Write scripts, payloads, captured responses, temporary data, and all other intermediate files to this task's working directory " + dir + "** (relative paths resolve here, or use this absolute path). **Do not write to /tmp or other absolute paths**."
 }
 
 // workerArtifactSpec is the worker's 段 [C]: its per-intent run dir is pre-created
 // by the engine (ensureRunDir), so it just writes relative paths there — no manual
 // mkdir, no cross-worker name collisions.
 func workerArtifactSpec(runDir string) string {
-	return "\n\n**中间产物输出规约**：脚本、payload、抓到的响应体、临时数据等一切中间产物，**一律写到本次意图的专属工作目录 " + runDir + "**（已自动建好，直接用相对路径写在这里即可，无需再手动建目录）——**不要写 /tmp、不要用其它绝对路径**。"
+	return "\n\n**Intermediate output rules**: Write scripts, payloads, captured responses, temporary data, and all other intermediate files to this intent's dedicated working directory " + runDir + "** (already created; use relative paths directly without creating it again). **Do not write to /tmp or other absolute paths**."
 }
 
 // ensureRunDir builds and creates an agent's working directory under base:
@@ -325,20 +341,20 @@ func workerSystem(proxyAddr, caCert, dataDir, runDir, workerName, taskOverride s
 	// ① 任务创建时保存的 Worker 模板/手写提示词快照。
 	if strings.TrimSpace(taskOverride) != "" {
 		if out, err := renderTmpl(taskOverride, vars); err == nil {
-			xlog.Debugf("[worker] workerSystem 命中任务级覆盖：bytes=%d", len(taskOverride))
+			xlog.Debugf("[worker] workerSystem using task-level override: bytes=%d", len(taskOverride))
 			return tail(out)
 		} else {
-			log.Printf("[worker] workerSystem 任务级模板渲染失败，回退全局配置: %v", err)
+			log.Printf("[worker] workerSystem task-level render failed; falling back to global configuration: %v", err)
 		}
 	}
 	// ② Agent 管理中保存的全局 Worker 提示词。
 	if PromptOverride != nil {
 		if tmpl, ok := PromptOverride("worker"); ok && tmpl != "" {
 			if out, err := renderTmpl(tmpl, vars); err == nil {
-				xlog.Debugf("[worker] workerSystem 命中全局 Agent 覆盖：bytes=%d", len(tmpl))
+				xlog.Debugf("[worker] workerSystem using global Agent override: bytes=%d", len(tmpl))
 				return tail(out)
 			} else {
-				log.Printf("[worker] workerSystem 全局模板渲染失败，回退默认模板: %v", err)
+				log.Printf("[worker] workerSystem global render failed; falling back to default template: %v", err)
 			}
 		}
 	}
@@ -346,10 +362,10 @@ func workerSystem(proxyAddr, caCert, dataDir, runDir, workerName, taskOverride s
 	if WorkerDefaultTemplateBodyFn != nil {
 		if tmpl := WorkerDefaultTemplateBodyFn(); tmpl != "" {
 			if out, err := renderTmpl(tmpl, vars); err == nil {
-				xlog.Debugf("[worker] workerSystem 命中默认 Worker 模板：bytes=%d", len(tmpl))
+				xlog.Debugf("[worker] workerSystem using default Worker template: bytes=%d", len(tmpl))
 				return tail(out)
 			} else {
-				log.Printf("[worker] workerSystem 默认模板渲染失败，回退内置模板: %v", err)
+				log.Printf("[worker] workerSystem default render failed; falling back to built-in template: %v", err)
 			}
 		}
 	}
@@ -384,7 +400,7 @@ func intentAssetIDs(intent *db.Node) []int64 {
 // 【二开·P-EXEC·A1 意图任务渲染导出】
 // 功能介绍：renderIntentTask 改名导出为 RenderIntentTask，供 RunCustomExecutor（A2）复用同一意图任务块文案
 func RenderIntentTask(intent *db.Node) string {
-	return fmt.Sprintf("\n\n【你领到的意图（本次唯一任务：只做这一条、只产生事实、做完即停）】：\n%s\n意图 id: %d（写回 record_fact / report_finding 时传它）", string(intent.Payload), intent.ID)
+	return fmt.Sprintf("\n\n[Your claimed intent: your only task for this run. Execute only this intent, record facts, and stop when complete]:\n%s\nIntent ID: %d (pass this to record_fact / report_finding)", string(intent.Payload), intent.ID)
 }
 
 // renderWorkerGraphOverview folds the global situational snapshot into the worker's
@@ -401,9 +417,9 @@ func renderWorkerGraphOverview(data map[string]any) string {
 	if err != nil {
 		return "" // fall back silently: the worker just won't have the global context
 	}
-	return "\n\n【全局探索态势（只读，帮你把自己这条意图放进大局看）】：\n" +
-		"下面是整个任务当前的探索概况。用途有两个：一是知道别人已发现什么，别重复；二是让你探自己这条意图时，能联想到它和全局的关系。\n" +
-		"**发散是好事**：探本意图时尽管深想、多联想。唯一的界线是——别真的动手去执行别的意图（那是别的 worker 的事，由规划者调度）。但凡你联想到有价值的线索（跨资产的联动、疑似另一条利用链的入口、全局层面的可疑点），**务必写进 fact 交规划者**——这是你重要的产出，不是可有可无。宁可多报一条让规划者判断，也别自己咽下去。\n" +
+	return "\n\n[Global exploration situation: read-only context for your intent]:\n" +
+		"The following overview shows what others have discovered so you can avoid duplication and understand your intent's relationship to the overall task.\n" +
+		"Think broadly while exploring this intent, but execute only your assigned intent; other intents belong to other workers under planner control. Record valuable related leads (cross-asset connections, other potential exploit-chain entrances, global suspicious patterns) as facts for the planner. These are important output: report useful leads for the planner to assess rather than withholding them.\n" +
 		string(b)
 }
 
@@ -473,7 +489,7 @@ func (w *Worker) execute(ctx context.Context, name string, taskID int64, as *db.
 		if ids := intentAssetIDs(intent); len(ids) > 0 {
 			if assets, err := as.GetByIDs(ids); err == nil && len(assets) > 0 {
 				if b, err := json.Marshal(assets); err == nil {
-					sysBody += "\n\n本意图 asset_ids 对应的目标资产：\n" + string(b)
+					sysBody += "\n\nTarget assets corresponding to this intent's asset_ids:\n" + string(b)
 				}
 				// 意图明确针对的这些资产 → 自动纳入任务测试范围（与 insertAssets 同一套
 				// 保守粒度）。upsertTaskScope 的 ON CONFLICT DO NOTHING + uq_task_scope
@@ -487,7 +503,7 @@ func (w *Worker) execute(ctx context.Context, name string, taskID int64, as *db.
 			}
 		}
 	}
-	sysBody += "\n\n开始执行上面这条意图：只做它、只产生事实、assets、finding、做完即停。"
+	sysBody += "\n\nExecute the intent above: do only this intent, produce only facts, assets, and findings, and stop when complete."
 	system, boundary := deferredSystem(sysBody, def)
 	// 任务级 deadline(经 ctx 注入)夹逼本 run 的墙钟预算 + 决定收尾词(见 taskclock.go)。
 	tc := taskClockFrom(ctx)
@@ -540,7 +556,7 @@ func (w *Worker) execute(ctx context.Context, name string, taskID int64, as *db.
 	// overview 罕见地 marshal 失败为空时，回退一句启动词，避免首轮出现空 user 消息。
 	input := overview
 	if strings.TrimSpace(input) == "" {
-		input = "开始执行 system 里领到的意图：只做它、只产生事实、assets、finding、做完即停。"
+		input = "Execute the intent assigned in the system prompt: do only this intent, produce facts, assets, and findings, and stop when complete."
 	}
 
 	// 实验功能:开启后由 noa 接管上下文压缩(归档集中在 <workDir>/noa/<SessionID> 下,持久)。
@@ -560,20 +576,20 @@ func (w *Worker) execute(ctx context.Context, name string, taskID int64, as *db.
 		alreadyRecorded = requestID != "" && hasWorkerChatMessage(s.Messages(), requestID)
 		if len(s.Messages()) > 0 && message == "" {
 			seedUnlockFromHistory(s.Messages(), def.UnlockSkill)
-			input = "继续执行。"
+			input = "Continue execution."
 		} else if len(s.Messages()) > 0 {
 			seedUnlockFromHistory(s.Messages(), def.UnlockSkill)
 		}
 	}
 	if message != "" {
 		if alreadyRecorded {
-			input = "继续执行上一次人工对话输入的新意图。不要重复已经完成的动作。"
+			input = "Continue the new intent from the previous human message. Do not repeat completed actions."
 		} else if len(s.Messages()) > 0 {
-			input = workerChatMarker(requestID) + "\n【人工对话输入的新意图】\n" + message +
-				"\n\n请立即按这条人工输入执行，完成后再根据上下文决定原任务是否需要继续。"
+			input = workerChatMarker(requestID) + "\n[New intent from human input]\n" + message +
+				"\n\nExecute this human instruction immediately. Once finished, decide from context whether to continue the original task."
 		} else {
-			input += "\n\n" + workerChatMarker(requestID) + "\n【人工对话输入的新意图】\n" + message +
-				"\n\n请优先执行这条人工输入。"
+			input += "\n\n" + workerChatMarker(requestID) + "\n[New intent from human input]\n" + message +
+				"\n\nPrioritize this human instruction."
 		}
 	}
 

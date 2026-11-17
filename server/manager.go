@@ -383,7 +383,7 @@ func (m *Manager) Workers() int {
 // SetWorkers persists the concurrent work-agent count. Values <=0 are rejected.
 func (m *Manager) SetWorkers(n int) error {
 	if n <= 0 {
-		return fmt.Errorf("workers 必须 >0")
+		return fmt.Errorf("workers must be >0")
 	}
 	return m.pg.SetSetting(settingWorkers, strconv.Itoa(n))
 }
@@ -410,7 +410,7 @@ func NewManager(dir, proxyAddr string) (*Manager, error) {
 	if err != nil {
 		return nil, err
 	}
-	log.Printf("[pg] 数据库配置来源: %s", source)
+	log.Printf("[pg] database configuration source: %s", source)
 	pg, err := pgdb.Open(dsn)
 	if err != nil {
 		return nil, err
@@ -433,7 +433,7 @@ func NewManager(dir, proxyAddr string) (*Manager, error) {
 		} else {
 			err = tr.RecoverHostDeleteStages(func(_ int64, taskID int64) (bool, error) {
 				if taskID <= 0 {
-					return false, errors.New("归档流量暂存日志缺少任务 ID")
+					return false, errors.New("Archived traffic staging log is missing task ID")
 				}
 				task, taskErr := pg.GetTask(taskID)
 				if taskErr != nil {
@@ -488,7 +488,7 @@ func NewManager(dir, proxyAddr string) (*Manager, error) {
 	}
 	if m.traffic != nil {
 		if err := m.traffic.SetUpstreamProxy(m.globalProxy); err != nil {
-			log.Printf("[proxy] 全局代理 %q 无效，已忽略: %v", m.globalProxy, err)
+			log.Printf("[proxy] ignoring invalid global proxy %q: %v", m.globalProxy, err)
 		}
 	}
 	m.enrich = enrich.New(m.assets, m.ProxyAddr, m.ProxyCACert, 4)
@@ -692,7 +692,7 @@ const browserMCPName = "browser"
 func (m *Manager) syncBrowserMCPProxy() {
 	servers, err := m.pg.ListMCP()
 	if err != nil {
-		log.Printf("[mcp] browser 代理同步: 读取 MCP 列表失败: %v", err)
+		log.Printf("[mcp] browser proxy sync: failed to read MCP list: %v", err)
 		return
 	}
 	var srv *pgdb.MCPServer
@@ -721,13 +721,13 @@ func (m *Manager) syncBrowserMCPProxy() {
 	srv.Args = encodeJSON(args)
 	srv.Env = encodeJSON(env)
 	if _, err := m.pg.SaveMCP(srv); err != nil {
-		log.Printf("[mcp] browser 代理同步失败: %v", err)
+		log.Printf("[mcp] browser proxy sync failed: %v", err)
 		return
 	}
 	if proxy != "" {
-		log.Printf("[mcp] browser MCP 已挂捕获代理 %s (CA %s)", proxy, cert)
+		log.Printf("[mcp] browser MCP configured with capture proxy %s (CA %s)", proxy, cert)
 	} else {
-		log.Printf("[mcp] browser MCP 已移除捕获代理配置")
+		log.Printf("[mcp] removed browser MCP capture proxy configuration")
 	}
 }
 
@@ -1836,7 +1836,7 @@ func (t *Task) NotifyDone(intentID int64) {
 func (t *Task) NotifyFinding(intentID int64, summary string) {
 	// 【二开·P-LOG·O1】INFO 记 finding 入账（排障：finding 到子任务派发链断在哪环；触发器命中见 P-LOG·O2）。
 	// 日志留在入口侧（enqueueTrigger 只管入账 + 唤醒）。
-	log.Printf("[finding] finding 入账：task %s 意图 #%d %s（派发链：planner 唤醒 + on_finding 触发器广播）", t.ID, intentID, firstLine(summary, 60))
+	log.Printf("[finding] recorded finding: task %s intent #%d %s (dispatch: planner wakeup + on_finding trigger broadcast)", t.ID, intentID, firstLine(summary, 60))
 	t.enqueueTrigger(agent.TriggerEvent{Kind: "finding", IntentID: intentID, Detail: summary})
 }
 

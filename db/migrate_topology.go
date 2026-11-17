@@ -163,8 +163,8 @@ func rewriteTopologySystemEdgeLabels(ctx context.Context, conn *sql.Conn) error 
 	//    是兜底文案）的行视为人工改过的，跳过。
 	const findingSQL = `UPDATE task_topology_edges e
 SET label = CASE
-  WHEN trim(coalesce(f.name,'')) = '' THEN '通过漏洞突破'
-  ELSE '通过' || left(trim(f.name), 20) || '突破' END,
+  WHEN trim(coalesce(f.name,'')) = '' THEN 'Access through a vulnerability'
+  ELSE 'Access through ' || left(trim(f.name), 20) || ' vulnerability' END,
     system_label = 'finding:' || e.evidence_ref
 FROM findings f
 WHERE e.evidence_ref LIKE 'finding:%'

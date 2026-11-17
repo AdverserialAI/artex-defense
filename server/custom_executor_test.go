@@ -144,7 +144,7 @@ func wireConversationToolsForTest(t *testing.T, m *Manager) {
 // waitForPreAgentConversation 等到真实 Conversation 的终态活动落库，不用固定睡眠猜测执行完成。
 func waitForPreAgentConversation(t *testing.T, s *Server, task *Task, agentKey string) (*db.Conversation, []db.Activity) {
 	t.Helper()
-	title := fmt.Sprintf("首个意图 · task#%s", task.ID)
+	title := fmt.Sprintf("First intent · task#%s", task.ID)
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
 		conversations, err := s.m.pg.ListConversations()
@@ -1119,10 +1119,10 @@ func TestPreAgentTaskCreateTriggerUsesConversationOnly(t *testing.T) {
 	waitForNodeState(t, task.Store, sid, "done", 5*time.Second)
 	conversation, _ := waitForPreAgentConversation(t, s, task, a.Key)
 	message := preAgentConversationUserMessage(t, s, conversation.ID)
-	if !strings.Contains(message, marker+"\n\n【本次由任务创建触发】") {
+	if !strings.Contains(message, marker+"\n\n[Triggered by task creation]") {
 		t.Fatalf("on_task_create message was not merged into pre_agent Conversation: %q", message)
 	}
-	if !strings.Contains(message, "【首个意图执行协议】") {
+	if !strings.Contains(message, "[First-intent execution protocol]") {
 		t.Fatalf("pre_agent protocol missing from Conversation input: %q", message)
 	}
 	if workerProvider.calls != 0 {
@@ -1282,7 +1282,7 @@ func TestRestoredPreAgentConversationDoesNotReplayTaskCreate(t *testing.T) {
 	if strings.Contains(message, marker) || strings.Contains(message, "【本次由任务创建触发】") {
 		t.Fatalf("restored pre_agent replayed on_task_create: %q", message)
 	}
-	if !strings.Contains(message, "【首个意图执行协议】") {
+	if !strings.Contains(message, "[First-intent execution protocol]") {
 		t.Fatalf("restored task skipped the pre_agent protocol itself: %q", message)
 	}
 	assertNoTaskActivityForIntent(t, restored, sid)

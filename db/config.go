@@ -552,13 +552,13 @@ func (d *DB) CheckExecutorKey(key string) error {
 		return err
 	}
 	if a == nil {
-		return fmt.Errorf("执行器标识 %q 未注册", key)
+		return fmt.Errorf("Executor key %q is not registered", key)
 	}
 	if !a.Enabled {
-		return fmt.Errorf("执行器 %q 所属 agent 已禁用", key)
+		return fmt.Errorf("The agent for executor %q is disabled", key)
 	}
 	if a.Builtin {
-		return fmt.Errorf("内置 agent 不能作为自定义执行器（executor_key 只面向自定义 agent）")
+		return fmt.Errorf("Built-in agents cannot be custom executors (executor_key is for custom agents only)")
 	}
 	return nil
 }
@@ -570,14 +570,14 @@ var executorKeyRe = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
 // 内置 agent 禁止设置（K18：executor 只面向自定义 agent）。
 func (d *DB) SetAgentExecutorKey(agentKey, executorKey string) error {
 	if executorKey != "" && !executorKeyRe.MatchString(executorKey) {
-		return fmt.Errorf("executor_key 格式非法（小写蛇形，字母开头）: %q", executorKey)
+		return fmt.Errorf("Invalid executor_key (lowercase snake_case, starts with a letter): %q", executorKey)
 	}
 	res, err := d.Exec(`UPDATE agents SET executor_key=NULLIF($2,'') WHERE key=$1 AND builtin=false`, agentKey, executorKey)
 	if err != nil {
 		return err
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
-		return fmt.Errorf("agent %q 不存在或是内置 agent（内置 agent 不可设置 executor_key）", agentKey)
+		return fmt.Errorf("Agent %q does not exist or is built-in (built-in agents cannot set executor_key)", agentKey)
 	}
 	return nil
 }
@@ -595,7 +595,7 @@ func (d *DB) SetAgentPlannerControlled(agentKey string, on bool) error {
 		return err
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
-		return fmt.Errorf("agent %q 不存在或是内置 agent（内置 agent 不可修改 planner_controlled）", agentKey)
+		return fmt.Errorf("Agent %q does not exist or is built-in (built-in agents cannot change planner_controlled)", agentKey)
 	}
 	return nil
 }
@@ -843,14 +843,14 @@ func (d *DB) SeedPromptIfEmpty(agentID int64, tmpl string) error {
 	if cur.Valid {
 		return nil // already seeded or user-edited → leave it
 	}
-	_, err := d.SavePrompt(agentID, tmpl, "内置默认", "system")
+	_, err := d.SavePrompt(agentID, tmpl, "Built-in default", "system")
 	return err
 }
 
 // ResetPromptToDefault appends the code-default template as a new version and
-// points current at it — the explicit "恢复为内置默认" action.
+// points current at it — the explicit "Restored built-in default" action.
 func (d *DB) ResetPromptToDefault(agentID int64, tmpl string) (int, error) {
-	return d.SavePrompt(agentID, tmpl, "恢复为内置默认", "system")
+	return d.SavePrompt(agentID, tmpl, "Restored built-in default", "system")
 }
 
 // SavePrompt appends a new version and points current_prompt_id at it.

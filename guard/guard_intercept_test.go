@@ -83,14 +83,14 @@ func TestPreToolUseAuditCommandByDecision(t *testing.T) {
 			name: "ask rejected Bash", tool: "Bash",
 			input:       `{"command":"` + command + `"}`,
 			ic:          stubInterceptor{decision: ask, matched: true, askOK: false},
-			wantBlocked: true, wantAction: "block", wantCommand: command, wantReason: "人工审批未通过",
+			wantBlocked: true, wantAction: "block", wantCommand: command, wantReason: "Human approval not granted",
 		},
 		{
 			name: "ask cancelled Bash", tool: "Bash",
 			input:       `{"command":"` + command + `"}`,
 			ic:          stubInterceptor{decision: ask, matched: true, askOK: true},
 			cancel:      true,
-			wantBlocked: true, wantAction: "block", wantCommand: command, wantReason: "工作已取消",
+			wantBlocked: true, wantAction: "block", wantCommand: command, wantReason: "Work cancelled",
 		},
 		{
 			name: "allow Bash", tool: "Bash",

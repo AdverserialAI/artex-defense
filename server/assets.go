@@ -107,7 +107,7 @@ func (s *Server) createCompany(w http.ResponseWriter, r *http.Request) {
 	id, added, skipped, invalid, scopeErrs, err := cs.CreateCompanyWithScope(req.Name, req.Logo, req.Scope, "api")
 	if err != nil {
 		if errors.Is(err, db.ErrCompanyNameConflict) {
-			writeErr(w, http.StatusConflict, "企业名称已存在")
+			writeErr(w, http.StatusConflict, "Company name already exists")
 			return
 		}
 		var validationErr *db.CompanyScopeValidationError
@@ -532,7 +532,7 @@ func (s *Server) insertAssets(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		if req.TaskID > 0 {
-			_ = as.SetTaskAssetSource(req.TaskID, id, "api", "通过资产 API 登记", nil)
+			_ = as.SetTaskAssetSource(req.TaskID, id, "api", "Registered through the asset API", nil)
 		}
 		results = append(results, result{Index: i, ID: id, Type: a.Type})
 	}

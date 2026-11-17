@@ -32,7 +32,7 @@ import (
 //
 // 这里强制三条不变式：
 //  1. 无游离节点：新增节点与首条边同事务写入；删边/删节点后对失去全部连线的节点
-//     自动降级为到入口的 pending 虚线（标签"发现方式待确认"）。
+//     自动降级为到入口的 pending 虚线（标签"Discovery method unconfirmed"）。
 //  2. 无自环、无环：写边前用 topologyWouldCycle 在事务内校验。
 //  3. 节点必须在图中：改边/删边/加备注前校验 IP 属于该任务拓扑。
 const (
@@ -43,7 +43,7 @@ const (
 	TopologyEntryConfirmed = "confirmed"
 
 	// TopologyFallbackLabel 是自动降级虚线（发现方式待确认）的固定文案。
-	TopologyFallbackLabel = "发现方式待确认"
+	TopologyFallbackLabel = "Discovery method unconfirmed"
 
 	topologyMaxHostnameRunes    = 255
 	topologyMaxDisplayRunes     = 120
@@ -397,7 +397,7 @@ func topologyFinite(v float64) bool { return !math.IsNaN(v) && !math.IsInf(v, 0)
 func normalizeTopologyColor(s string) (string, error) {
 	s = strings.TrimSpace(s)
 	if utf8.RuneCountInString(s) > topologyMaxColorRunes {
-		return "", fmt.Errorf("颜色最多 %d 个字符", topologyMaxColorRunes)
+		return "", fmt.Errorf("Color must not exceed %d characters", topologyMaxColorRunes)
 	}
 	return s, nil
 }
@@ -432,28 +432,28 @@ func topologyHasEdge(edges []TopologyEdge, e TopologyEdge) bool {
 func normalizeTopologyNode(n TopologyNode) (TopologyNode, error) {
 	n.IP = strings.TrimSpace(n.IP)
 	if net.ParseIP(n.IP) == nil {
-		return n, fmt.Errorf("节点 IP 无效")
+		return n, fmt.Errorf("Invalid node IP")
 	}
 	n.Hostname = strings.TrimSpace(n.Hostname)
 	n.DisplayLabel = strings.TrimSpace(n.DisplayLabel)
 	n.EntryStatus = strings.TrimSpace(n.EntryStatus)
 	if utf8.RuneCountInString(n.Hostname) > topologyMaxHostnameRunes {
-		return n, fmt.Errorf("主机名最多 %d 个字符", topologyMaxHostnameRunes)
+		return n, fmt.Errorf("Hostname must not exceed %d characters", topologyMaxHostnameRunes)
 	}
 	if utf8.RuneCountInString(n.DisplayLabel) > topologyMaxDisplayRunes {
-		return n, fmt.Errorf("显示名最多 %d 个字符", topologyMaxDisplayRunes)
+		return n, fmt.Errorf("Display name must not exceed %d characters", topologyMaxDisplayRunes)
 	}
 	n.Description = strings.TrimSpace(n.Description)
 	if utf8.RuneCountInString(n.Description) > topologyMaxDescriptionRunes {
-		return n, fmt.Errorf("节点描述最多 %d 个字符", topologyMaxDescriptionRunes)
+		return n, fmt.Errorf("Node description must not exceed %d characters", topologyMaxDescriptionRunes)
 	}
 	switch n.EntryStatus {
 	case "", TopologyEntrySuspected, TopologyEntryConfirmed:
 	default:
-		return n, fmt.Errorf("入口状态只支持 suspected / confirmed / 空")
+		return n, fmt.Errorf("Entry state must be suspected / confirmed / empty")
 	}
 	if !topologyFinite(n.X) || !topologyFinite(n.Y) {
-		return n, fmt.Errorf("节点坐标无效")
+		return n, fmt.Errorf("Invalid node coordinates")
 	}
 	return n, nil
 }
@@ -462,9 +462,9 @@ func normalizeTopologyNode(n TopologyNode) (TopologyNode, error) {
 func topologyBreakLabel(vulnName string) string {
 	name := strings.TrimSpace(vulnName)
 	if name == "" {
-		return "通过漏洞突破"
+		return "Access through a vulnerability"
 	}
-	return "通过" + truncateTopologyRunes(name, 20) + "突破"
+	return "Access through " + truncateTopologyRunes(name, 20) + " vulnerability"
 }
 
 func truncateTopologyRunes(s string, max int) string {
@@ -485,13 +485,13 @@ func normalizeTopologyEdge(e TopologyEdge) (TopologyEdge, error) {
 		e.Kind = topologyKindReachable
 	}
 	if !validTopologyEdgeKind(e.Kind) {
-		return e, fmt.Errorf("线型只支持 solid / reachable")
+		return e, fmt.Errorf("Line style must be solid / reachable")
 	}
 	if utf8.RuneCountInString(e.Label) > topologyMaxLabelRunes {
-		return e, fmt.Errorf("连线标签最多 %d 个字符", topologyMaxLabelRunes)
+		return e, fmt.Errorf("Edge label must not exceed %d characters", topologyMaxLabelRunes)
 	}
 	if utf8.RuneCountInString(e.EvidenceRef) > topologyMaxEvidenceRunes {
-		return e, fmt.Errorf("证据引用最多 %d 个字符", topologyMaxEvidenceRunes)
+		return e, fmt.Errorf("Evidence reference must not exceed %d characters", topologyMaxEvidenceRunes)
 	}
 	if e.Kind == topologyKindReachable && e.Label == "" {
 		e.Label = TopologyFallbackLabel
@@ -616,7 +616,7 @@ func insertTopologyEdge(q topologyStore, taskID int64, actor string, e TopologyE
 	_, err := q.Exec(`INSERT INTO task_topology_edges(task_id,src_ip,dst_ip,label,kind,evidence_ref,updated_by)
 VALUES($1,$2,$3,$4,$5,$6,$7)`, taskID, e.SrcIP, e.DstIP, e.Label, e.Kind, e.EvidenceRef, actor)
 	if err != nil && topologyUniqueViolation(err) {
-		return fmt.Errorf("该联系已存在（同一来源/目标/线型）")
+		return fmt.Errorf("This relation already exists (same source/target/line style)")
 	}
 	return err
 }
@@ -656,10 +656,10 @@ func (d *DB) AddTopologyNode(taskID int64, actor string, node TopologyNode, firs
 		return nil, err
 	}
 	if topologyHasNode(g.Nodes, node.IP) {
-		return nil, fmt.Errorf("节点 %s 已在拓扑中", node.IP)
+		return nil, fmt.Errorf("Node %s is already in the topology", node.IP)
 	}
 	if node.GroupID != nil && !topologyGroupKnown(g, *node.GroupID) {
-		return nil, fmt.Errorf("分组不存在")
+		return nil, fmt.Errorf("Group does not exist")
 	}
 	if _, err := tx.Exec(`INSERT INTO task_topology_nodes(task_id,ip,hostname,display_label,group_id,x,y,entry_status,color,description,updated_by)
 VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`, taskID, node.IP, node.Hostname, node.DisplayLabel, node.GroupID, node.X, node.Y, node.EntryStatus, node.Color, node.Description, actor); err != nil {
@@ -670,20 +670,20 @@ VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`, taskID, node.IP, node.Hostname, nod
 		edge.DstIP = node.IP
 	}
 	if edge.DstIP != node.IP {
-		return nil, fmt.Errorf("首条边必须连到新增节点")
+		return nil, fmt.Errorf("The first edge must connect to the new node")
 	}
 	if edge.SrcIP == "" {
 		edge.SrcIP = topologyEntryIP(g.Nodes, g.Edges)
 	}
 	if edge.SrcIP != "" {
 		if !topologyHasNode(g.Nodes, edge.SrcIP) {
-			return nil, fmt.Errorf("来源节点 %s 不在拓扑中", edge.SrcIP)
+			return nil, fmt.Errorf("Source node %s is not in the topology", edge.SrcIP)
 		}
 		if edge.SrcIP == edge.DstIP {
-			return nil, fmt.Errorf("不能连接到自身")
+			return nil, fmt.Errorf("A node cannot connect to itself")
 		}
 		if topologyWouldCycle(g.Edges, edge.SrcIP, edge.DstIP) {
-			return nil, fmt.Errorf("该联系会形成环")
+			return nil, fmt.Errorf("This relation would create a cycle")
 		}
 		if err := insertTopologyEdge(tx, taskID, actor, edge); err != nil {
 			return nil, err
@@ -703,7 +703,7 @@ func (d *DB) PatchTopologyNode(taskID int64, ip, actor string, patch TopologyNod
 	}
 	ip = strings.TrimSpace(ip)
 	if net.ParseIP(ip) == nil {
-		return nil, fmt.Errorf("节点 IP 无效")
+		return nil, fmt.Errorf("Invalid node IP")
 	}
 	tx, err := d.Begin()
 	if err != nil {
@@ -722,7 +722,7 @@ func (d *DB) PatchTopologyNode(taskID int64, ip, actor string, patch TopologyNod
 		}
 	}
 	if current < 0 {
-		return nil, fmt.Errorf("节点 %s 不在拓扑中", ip)
+		return nil, fmt.Errorf("Node %s is not in the topology", ip)
 	}
 	sets := []string{}
 	args := []any{taskID, ip}
@@ -733,26 +733,26 @@ func (d *DB) PatchTopologyNode(taskID int64, ip, actor string, patch TopologyNod
 	if patch.Hostname != nil {
 		hostname := strings.TrimSpace(*patch.Hostname)
 		if utf8.RuneCountInString(hostname) > topologyMaxHostnameRunes {
-			return nil, fmt.Errorf("主机名最多 %d 个字符", topologyMaxHostnameRunes)
+			return nil, fmt.Errorf("Hostname must not exceed %d characters", topologyMaxHostnameRunes)
 		}
 		set("hostname", hostname)
 	}
 	if patch.DisplayLabel != nil {
 		label := strings.TrimSpace(*patch.DisplayLabel)
 		if utf8.RuneCountInString(label) > topologyMaxDisplayRunes {
-			return nil, fmt.Errorf("显示名最多 %d 个字符", topologyMaxDisplayRunes)
+			return nil, fmt.Errorf("Display name must not exceed %d characters", topologyMaxDisplayRunes)
 		}
 		set("display_label", label)
 	}
 	if patch.X != nil {
 		if !topologyFinite(*patch.X) {
-			return nil, fmt.Errorf("节点坐标无效")
+			return nil, fmt.Errorf("Invalid node coordinates")
 		}
 		set("x", *patch.X)
 	}
 	if patch.Y != nil {
 		if !topologyFinite(*patch.Y) {
-			return nil, fmt.Errorf("节点坐标无效")
+			return nil, fmt.Errorf("Invalid node coordinates")
 		}
 		set("y", *patch.Y)
 	}
@@ -760,7 +760,7 @@ func (d *DB) PatchTopologyNode(taskID int64, ip, actor string, patch TopologyNod
 		sets = append(sets, "group_id=NULL")
 	} else if patch.GroupID != nil {
 		if !topologyGroupKnown(g, *patch.GroupID) {
-			return nil, fmt.Errorf("分组不存在")
+			return nil, fmt.Errorf("Group does not exist")
 		}
 		set("group_id", *patch.GroupID)
 	}
@@ -772,7 +772,7 @@ func (d *DB) PatchTopologyNode(taskID int64, ip, actor string, patch TopologyNod
 		case next == TopologyEntryConfirmed && cur == TopologyEntrySuspected:
 		case next == "":
 		default:
-			return nil, fmt.Errorf("入口状态只允许从疑似改为确认，或清空")
+			return nil, fmt.Errorf("Entry state can only change from suspected to confirmed, or be cleared")
 		}
 		set("entry_status", next)
 	}
@@ -786,7 +786,7 @@ func (d *DB) PatchTopologyNode(taskID int64, ip, actor string, patch TopologyNod
 	if patch.Description != nil {
 		desc := strings.TrimSpace(*patch.Description)
 		if utf8.RuneCountInString(desc) > topologyMaxDescriptionRunes {
-			return nil, fmt.Errorf("节点描述最多 %d 个字符", topologyMaxDescriptionRunes)
+			return nil, fmt.Errorf("Node description must not exceed %d characters", topologyMaxDescriptionRunes)
 		}
 		set("description", desc)
 	}
@@ -814,7 +814,7 @@ func (d *DB) DeleteTopologyNode(taskID int64, ip, actor string) (*TopologyGraph,
 	}
 	ip = strings.TrimSpace(ip)
 	if net.ParseIP(ip) == nil {
-		return nil, fmt.Errorf("节点 IP 无效")
+		return nil, fmt.Errorf("Invalid node IP")
 	}
 	tx, err := d.Begin()
 	if err != nil {
@@ -826,7 +826,7 @@ func (d *DB) DeleteTopologyNode(taskID int64, ip, actor string) (*TopologyGraph,
 		return nil, err
 	}
 	if !topologyHasNode(g.Nodes, ip) {
-		return nil, fmt.Errorf("节点 %s 不在拓扑中", ip)
+		return nil, fmt.Errorf("Node %s is not in the topology", ip)
 	}
 	if _, err := tx.Exec(`DELETE FROM task_topology_edges WHERE task_id=$1 AND (src_ip=$2 OR dst_ip=$2)`, taskID, ip); err != nil {
 		return nil, err
@@ -882,25 +882,25 @@ func (d *DB) AddTopologyEdge(taskID int64, actor string, edge TopologyEdge) (*To
 		return nil, err
 	}
 	if len(g.Nodes) == 0 {
-		return nil, fmt.Errorf("图中还没有节点，无法建立联系")
+		return nil, fmt.Errorf("The graph has no nodes; a relation cannot be created")
 	}
 	if edge.SrcIP == "" {
 		edge.SrcIP = topologyEntryIP(g.Nodes, g.Edges)
 	}
 	if !topologyHasNode(g.Nodes, edge.SrcIP) {
-		return nil, fmt.Errorf("来源节点 %s 不在拓扑中", edge.SrcIP)
+		return nil, fmt.Errorf("Source node %s is not in the topology", edge.SrcIP)
 	}
 	if !topologyHasNode(g.Nodes, edge.DstIP) {
-		return nil, fmt.Errorf("目标节点 %s 不在拓扑中", edge.DstIP)
+		return nil, fmt.Errorf("Target node %s is not in the topology", edge.DstIP)
 	}
 	if edge.SrcIP == edge.DstIP {
-		return nil, fmt.Errorf("不能连接到自身")
+		return nil, fmt.Errorf("A node cannot connect to itself")
 	}
 	if topologyWouldCycle(g.Edges, edge.SrcIP, edge.DstIP) {
-		return nil, fmt.Errorf("该联系会形成环")
+		return nil, fmt.Errorf("This relation would create a cycle")
 	}
 	if topologyHasEdge(g.Edges, edge) {
-		return nil, fmt.Errorf("该联系已存在（同一来源/目标/线型）")
+		return nil, fmt.Errorf("This relation already exists (same source/target/line style)")
 	}
 	if err := insertTopologyEdge(tx, taskID, actor, edge); err != nil {
 		return nil, err
@@ -935,7 +935,7 @@ func (d *DB) PatchTopologyEdge(taskID, edgeID int64, actor string, patch Topolog
 		}
 	}
 	if current < 0 {
-		return nil, fmt.Errorf("联系 %d 不在拓扑中", edgeID)
+		return nil, fmt.Errorf("Relation %d is not in the topology", edgeID)
 	}
 	next := g.Edges[current]
 	if patch.SrcIP != nil {
@@ -963,13 +963,13 @@ func (d *DB) PatchTopologyEdge(taskID, edgeID int64, actor string, patch Topolog
 	}
 	next = normalized
 	if !topologyHasNode(g.Nodes, next.SrcIP) {
-		return nil, fmt.Errorf("来源节点 %s 不在拓扑中", next.SrcIP)
+		return nil, fmt.Errorf("Source node %s is not in the topology", next.SrcIP)
 	}
 	if !topologyHasNode(g.Nodes, next.DstIP) {
-		return nil, fmt.Errorf("目标节点 %s 不在拓扑中", next.DstIP)
+		return nil, fmt.Errorf("Target node %s is not in the topology", next.DstIP)
 	}
 	if next.SrcIP == next.DstIP {
-		return nil, fmt.Errorf("不能连接到自身")
+		return nil, fmt.Errorf("A node cannot connect to itself")
 	}
 	others := make([]TopologyEdge, 0, len(g.Edges))
 	for _, e := range g.Edges {
@@ -978,15 +978,15 @@ func (d *DB) PatchTopologyEdge(taskID, edgeID int64, actor string, patch Topolog
 		}
 	}
 	if topologyWouldCycle(others, next.SrcIP, next.DstIP) {
-		return nil, fmt.Errorf("该联系会形成环")
+		return nil, fmt.Errorf("This relation would create a cycle")
 	}
 	if topologyHasEdge(others, next) {
-		return nil, fmt.Errorf("该联系已存在（同一来源/目标/线型）")
+		return nil, fmt.Errorf("This relation already exists (same source/target/line style)")
 	}
 	if _, err := tx.Exec(`UPDATE task_topology_edges SET src_ip=$2,dst_ip=$3,label=$4,kind=$5,color=$6,updated_by=$7,updated_at=now()
 WHERE task_id=$1 AND id=$8`, taskID, next.SrcIP, next.DstIP, next.Label, next.Kind, next.Color, actor, edgeID); err != nil {
 		if topologyUniqueViolation(err) {
-			return nil, fmt.Errorf("该联系已存在（同一来源/目标/线型）")
+			return nil, fmt.Errorf("This relation already exists (same source/target/line style)")
 		}
 		return nil, err
 	}
@@ -1022,7 +1022,7 @@ func (d *DB) DeleteTopologyEdge(taskID, edgeID int64, actor string) (*TopologyGr
 		}
 	}
 	if !found {
-		return nil, fmt.Errorf("联系 %d 不在拓扑中", edgeID)
+		return nil, fmt.Errorf("Relation %d is not in the topology", edgeID)
 	}
 	if _, err := tx.Exec(`DELETE FROM task_topology_edges WHERE task_id=$1 AND id=$2`, taskID, edgeID); err != nil {
 		return nil, err
@@ -1057,13 +1057,13 @@ func (d *DB) UpsertTopologyGroup(taskID int64, actor string, group TopologyGroup
 	group.Name = strings.TrimSpace(group.Name)
 	group.Color = strings.TrimSpace(group.Color)
 	if utf8.RuneCountInString(group.Name) > topologyMaxGroupRunes {
-		return nil, fmt.Errorf("分组名最多 %d 个字符", topologyMaxGroupRunes)
+		return nil, fmt.Errorf("Group name must not exceed %d characters", topologyMaxGroupRunes)
 	}
 	if group.Width <= 0 || group.Height <= 0 {
-		return nil, fmt.Errorf("分组宽高必须大于 0")
+		return nil, fmt.Errorf("Group width and height must be greater than 0")
 	}
 	if !topologyFinite(group.X) || !topologyFinite(group.Y) || !topologyFinite(group.Width) || !topologyFinite(group.Height) {
-		return nil, fmt.Errorf("分组坐标或尺寸无效")
+		return nil, fmt.Errorf("Invalid group coordinates or dimensions")
 	}
 	if group.Color == "" {
 		group.Color = "#94a3b8"
@@ -1075,7 +1075,7 @@ WHERE task_id=$1 AND id=$2`, taskID, group.ID, group.Name, group.X, group.Y, gro
 			return nil, err
 		}
 		if rows, _ := result.RowsAffected(); rows == 0 {
-			return nil, fmt.Errorf("分组 %d 不在该任务中", group.ID)
+			return nil, fmt.Errorf("Group %d does not belong to this task", group.ID)
 		}
 		return d.TaskTopologyEditor(taskID)
 	}
@@ -1105,7 +1105,7 @@ WHERE task_id=$1 AND group_id=$2`, taskID, groupID, actor); err != nil {
 		return nil, err
 	}
 	if rows, _ := result.RowsAffected(); rows == 0 {
-		return nil, fmt.Errorf("分组 %d 不在该任务中", groupID)
+		return nil, fmt.Errorf("Group %d does not belong to this task", groupID)
 	}
 	if err := tx.Commit(); err != nil {
 		return nil, err
@@ -1121,10 +1121,10 @@ func (d *DB) AddTopologyNote(taskID int64, nodeIP, body, actor string) (*Topolog
 	nodeIP = strings.TrimSpace(nodeIP)
 	body = strings.TrimSpace(body)
 	if net.ParseIP(nodeIP) == nil {
-		return nil, fmt.Errorf("节点 IP 无效")
+		return nil, fmt.Errorf("Invalid node IP")
 	}
 	if body == "" || utf8.RuneCountInString(body) > topologyMaxNoteRunes {
-		return nil, fmt.Errorf("备注需要 1 到 %d 个字符", topologyMaxNoteRunes)
+		return nil, fmt.Errorf("Note must contain 1–%d characters", topologyMaxNoteRunes)
 	}
 	tx, err := d.Begin()
 	if err != nil {
@@ -1136,7 +1136,7 @@ func (d *DB) AddTopologyNote(taskID int64, nodeIP, body, actor string) (*Topolog
 		return nil, err
 	}
 	if !topologyHasNode(nodes, nodeIP) {
-		return nil, fmt.Errorf("节点 %s 不在拓扑中", nodeIP)
+		return nil, fmt.Errorf("Node %s is not in the topology", nodeIP)
 	}
 	if _, err := tx.Exec(`INSERT INTO task_topology_notes(task_id,node_ip,body,created_by) VALUES($1,$2,$3,$4)`, taskID, nodeIP, body, actor); err != nil {
 		return nil, err

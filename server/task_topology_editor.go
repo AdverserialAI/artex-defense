@@ -34,7 +34,7 @@ func (s *Server) topologyTask(r *http.Request) (int64, string) {
 		return 0, "task not found"
 	}
 	if t.CategoryNKey != "内网渗透" {
-		return 0, "内网拓扑仅适用于内网渗透任务"
+		return 0, "Internal topology is only available for internal penetration testing tasks"
 	}
 	id, _ := strconv.ParseInt(t.ID, 10, 64)
 	if id <= 0 {
@@ -73,7 +73,7 @@ func (s *Server) addTopologyEditorNode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if net.ParseIP(strings.TrimSpace(input.Node.IP)) == nil {
-		writeErr(w, http.StatusBadRequest, "节点 IP 无效")
+		writeErr(w, http.StatusBadRequest, "Invalid node IP")
 		return
 	}
 	g, err := s.m.pg.AddTopologyNode(taskID, "ARTEX", input.Node, input.FirstEdge)
@@ -100,7 +100,7 @@ func (s *Server) topologyAssetBackflow(taskID int64, ip string) {
 		return
 	}
 	if _, err := store.RegisterTaskAssetScopes(taskID, []db.ScopeInput{{Kind: "ip", Value: ip}}); err != nil {
-		xlog.Errorf("[topology] 回填任务资产失败 task=%d ip=%s: %v", taskID, ip, err)
+		xlog.Errorf("[topology] failed to backfill task assets task=%d ip=%s: %v", taskID, ip, err)
 	}
 }
 
@@ -116,7 +116,7 @@ func topologyNodeGroupPatch(raw json.RawMessage) (groupID *int64, clear bool, er
 	}
 	id, parseErr := strconv.ParseInt(text, 10, 64)
 	if parseErr != nil {
-		return nil, false, errors.New("group_id 必须是数字或 null")
+		return nil, false, errors.New("group_id must be a number or null")
 	}
 	return &id, false, nil
 }
@@ -147,7 +147,7 @@ func (s *Server) patchTopologyEditorNode(w http.ResponseWriter, r *http.Request)
 	}
 	ip := strings.TrimSpace(r.PathValue("ip"))
 	if net.ParseIP(ip) == nil {
-		writeErr(w, http.StatusBadRequest, "节点 IP 无效")
+		writeErr(w, http.StatusBadRequest, "Invalid node IP")
 		return
 	}
 	g, err := s.m.pg.PatchTopologyNode(taskID, ip, "ARTEX", db.TopologyNodePatch{
@@ -176,7 +176,7 @@ func (s *Server) deleteTopologyEditorNode(w http.ResponseWriter, r *http.Request
 	}
 	ip := strings.TrimSpace(r.PathValue("ip"))
 	if net.ParseIP(ip) == nil {
-		writeErr(w, http.StatusBadRequest, "节点 IP 无效")
+		writeErr(w, http.StatusBadRequest, "Invalid node IP")
 		return
 	}
 	g, err := s.m.pg.DeleteTopologyNode(taskID, ip, "ARTEX")

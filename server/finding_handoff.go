@@ -35,17 +35,17 @@ func findingHandoffText(f *db.DBFinding) string {
 	var b strings.Builder
 	marker := findingHandoffMarker(f.ID)
 	b.WriteString(marker)
-	b.WriteString("\n同一资产新增 Finding，请纳入当前内网渗透规划，不要重复创建子任务。\n")
+	b.WriteString("\nNew Finding for the same asset. Include it in the current internal penetration testing plan; do not create another subtask.\n")
 	if f.TaskID != nil {
-		fmt.Fprintf(&b, "来源任务：#%d\n", *f.TaskID)
+		fmt.Fprintf(&b, "Source task: #%d\n", *f.TaskID)
 	}
 	fmt.Fprintf(&b, "Finding：#%d · %s · %s\n", f.ID, f.VulnClass, f.Severity)
 	if name := clipFindingHandoff(f.Name, 500); name != "" {
-		b.WriteString("名称：" + name + "\n")
+		b.WriteString("Name: " + name + "\n")
 	}
-	b.WriteString("摘要：" + clipFindingHandoff(f.Summary, 4000) + "\n")
+	b.WriteString("Summary: " + clipFindingHandoff(f.Summary, 4000) + "\n")
 	if evidence := clipFindingHandoff(f.Evidence, 8000); evidence != "" {
-		b.WriteString("证据：\n" + evidence)
+		b.WriteString("Evidence:\n" + evidence)
 	}
 	return b.String()
 }
@@ -56,11 +56,11 @@ func findingHandoffText(f *db.DBFinding) string {
 // goal before shared task admission revives them.
 func (s *Server) toolAppendFindingToTask() actool.CoreTool {
 	return wrTool("append_finding_to_task",
-		"把 Finding 的内容和证据补充到负责同一资产的内网渗透任务。参数 task_id=内网任务 id，finding_id=Finding id；多主机 Finding 必须传 target_asset。允许跨父子血缘，但目标必须登记相同资产；终态任务会新增目标并复活，重复追加返回 already_appended。",
+		"Append a Finding's contents and evidence to the internal penetration-testing task responsible for the same asset. task_id is the internal task ID and finding_id is the Finding ID; target_asset is required for multi-host findings. Cross parent/child lineage is allowed, but the target task must register the same asset. Terminal tasks gain a new goal and resume; repeated appends return already_appended.",
 		objSchema(map[string]any{
-			"task_id":      strParam("负责同一资产的内网渗透任务 id"),
-			"finding_id":   map[string]any{"type": "integer", "description": "要补充的 Finding id"},
-			"target_asset": strParam("可选：多主机 Finding 的精确资产 IP/域名/URL"),
+			"task_id":      strParam("ID of the internal penetration testing task responsible for the same asset"),
+			"finding_id":   map[string]any{"type": "integer", "description": "ID of the Finding to append"},
+			"target_asset": strParam("Optional: exact asset IP/domain/URL for a multi-host Finding"),
 		}, "task_id", "finding_id"),
 		func(ctx context.Context, in json.RawMessage) (actool.Result, error) {
 			var a struct {
@@ -72,32 +72,32 @@ func (s *Server) toolAppendFindingToTask() actool.CoreTool {
 			taskID := strings.TrimSpace(a.TaskID)
 			findingID := parseProfileID(a.FindingID)
 			if taskID == "" || findingID <= 0 {
-				return actool.Errorf("task_id 和有效的 finding_id 为必填"), nil
+				return actool.Errorf("task_id and a valid finding_id are required"), nil
 			}
 			target, ok := s.m.Task(taskID)
 			if !ok || target == nil {
-				return actool.Errorf("子任务不存在: " + taskID), nil
+				return actool.Errorf("Subtask does not exist: " + taskID), nil
 			}
 			finding, err := s.m.pg.GetFinding(findingID)
 			if err != nil {
-				return actool.Errorf("读取 Finding 失败: " + err.Error()), nil
+				return actool.Errorf("Failed to read Finding: " + err.Error()), nil
 			}
 			if finding == nil {
-				return actool.Errorf("Finding 不存在"), nil
+				return actool.Errorf("Finding does not exist"), nil
 			}
 			if target.CategoryName != "内网渗透" {
-				return actool.Errorf("目标任务不是内网渗透子任务"), nil
+				return actool.Errorf("Target task is not an internal penetration testing subtask"), nil
 			}
 			assetKeys, err := s.findingDispatchAssetKeys(findingID, a.TargetAsset)
 			if err != nil {
-				return actool.Errorf(fmt.Sprintf("解析 Finding 资产失败: %v", err)), nil
+				return actool.Errorf(fmt.Sprintf("Failed to resolve Finding assets: %v", err)), nil
 			}
 			matchedAsset := ""
 			for _, key := range assetKeys {
 				var exists bool
 				if err := s.m.pg.QueryRow(`SELECT EXISTS(SELECT 1 FROM task_dispatch_targets
 					WHERE task_id=$1 AND asset_key=$2)`, target.ID, key).Scan(&exists); err != nil {
-					return actool.Errorf(fmt.Sprintf("检查目标任务资产失败: %v", err)), nil
+					return actool.Errorf(fmt.Sprintf("Failed to check target task assets: %v", err)), nil
 				}
 				if exists {
 					matchedAsset = key
@@ -105,7 +105,7 @@ func (s *Server) toolAppendFindingToTask() actool.CoreTool {
 				}
 			}
 			if matchedAsset == "" {
-				return actool.Errorf("目标任务未登记该 Finding 的资产，不能追加"), nil
+				return actool.Errorf("The target task has not registered this Finding's asset; cannot append"), nil
 			}
 
 			marker := findingHandoffMarker(findingID)
@@ -124,7 +124,7 @@ func (s *Server) toolAppendFindingToTask() actool.CoreTool {
 			if err == nil {
 				revived, reviveErr := reviveTarget()
 				if reviveErr != nil {
-					return actool.Errorf(fmt.Sprintf("Finding 已追加，但任务恢复失败: %v", reviveErr)), nil
+					return actool.Errorf(fmt.Sprintf("Finding was appended, but task recovery failed: %v", reviveErr)), nil
 				}
 				return jsonResult(map[string]any{
 					"status": "already_appended", "task_id": taskID,
@@ -132,7 +132,7 @@ func (s *Server) toolAppendFindingToTask() actool.CoreTool {
 				})
 			}
 			if err != sql.ErrNoRows {
-				return actool.Errorf("检查 Finding 追加记录失败: " + err.Error()), nil
+				return actool.Errorf("Failed to check Finding append records: " + err.Error()), nil
 			}
 
 			// A terminal task with no open goal would swallow a plain hint in the
@@ -141,10 +141,10 @@ func (s *Server) toolAppendFindingToTask() actool.CoreTool {
 			if isTerminalStatus(target.lifecycleSnapshot().Status) {
 				openGoal, goalErr := target.Store.HasOpenGoal()
 				if goalErr != nil {
-					return actool.Errorf(fmt.Sprintf("检查目标任务失败: %v", goalErr)), nil
+					return actool.Errorf(fmt.Sprintf("Failed to check target task: %v", goalErr)), nil
 				}
 				if !openGoal {
-					goalText := fmt.Sprintf("%s 评估并处理同一资产新增 Finding #%d，纳入内网渗透规划。", marker, findingID)
+					goalText := fmt.Sprintf("%s Evaluate and handle new Finding #%d for the same asset; include it in the internal penetration testing plan.", marker, findingID)
 					var goalState string
 					goalErr = s.m.pg.QueryRow(`SELECT id,state FROM exploration_nodes
 						WHERE exploration_id=$1 AND kind='goal' AND payload->>'text' LIKE $2
@@ -153,27 +153,27 @@ func (s *Server) toolAppendFindingToTask() actool.CoreTool {
 					case nil:
 						if goalState != "open" {
 							if _, goalErr = s.m.pg.Exec(`UPDATE exploration_nodes SET state='open' WHERE id=$1`, goalID); goalErr != nil {
-								return actool.Errorf(fmt.Sprintf("重新打开 Finding 目标失败: %v", goalErr)), nil
+								return actool.Errorf(fmt.Sprintf("Failed to reopen Finding goal: %v", goalErr)), nil
 							}
 							target.NotifyGoal([]string{goalText})
 						}
 					case sql.ErrNoRows:
 						goalID, goalErr = target.Store.AddGoal(map[string]any{"text": goalText, "vulnclass": finding.VulnClass}, "vuln_dispatcher")
 						if goalErr != nil {
-							return actool.Errorf(fmt.Sprintf("新增 Finding 目标失败: %v", goalErr)), nil
+							return actool.Errorf(fmt.Sprintf("Failed to add Finding goal: %v", goalErr)), nil
 						}
 						if of, _ := target.Store.OriginFactID(); of > 0 {
 							_ = target.Store.Link(of, db.RelSpawns, goalID)
 						}
 						target.NotifyGoal([]string{goalText})
 					default:
-						return actool.Errorf(fmt.Sprintf("读取 Finding 目标失败: %v", goalErr)), nil
+						return actool.Errorf(fmt.Sprintf("Failed to read Finding goal: %v", goalErr)), nil
 					}
 				}
 			}
 			revived, reviveErr := reviveTarget()
 			if reviveErr != nil {
-				return actool.Errorf(fmt.Sprintf("恢复内网任务失败: %v", reviveErr)), nil
+				return actool.Errorf(fmt.Sprintf("Failed to revive internal task: %v", reviveErr)), nil
 			}
 
 			text := findingHandoffText(finding)
@@ -188,11 +188,11 @@ func (s *Server) toolAppendFindingToTask() actool.CoreTool {
 			_, _ = fmt.Sscanf(res.Flatten(), "hint added: %d", &hintID)
 			auditID, auditErr := target.Store.AppendActivity(db.Activity{
 				NodeID: &hintID, Worker: "vuln_dispatcher", Kind: "finding_handoff",
-				Summary: fmt.Sprintf("Finding #%d 已补充到同资产内网子任务", findingID),
+				Summary: fmt.Sprintf("Finding #%d appended to the internal subtask for the same asset", findingID),
 				Detail:  fmt.Sprintf("task_id=%s finding_id=%d hint_id=%d goal_id=%d asset=%s revived=%t", taskID, findingID, hintID, goalID, matchedAsset, revived),
 			})
 			if auditErr != nil {
-				log.Printf("[dispatcher] Finding 补充审计记录失败 task=%s finding=%d: %v", taskID, findingID, auditErr)
+				log.Printf("[dispatcher] failed to record Finding append audit task=%s finding=%d: %v", taskID, findingID, auditErr)
 			}
 			return jsonResult(map[string]any{
 				"status": "appended", "task_id": taskID, "finding_id": findingID,

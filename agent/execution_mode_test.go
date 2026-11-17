@@ -33,10 +33,10 @@ func TestExecutionModePromptSpecs(t *testing.T) {
 	if got := plannerExecutionModeSpec("验证 RCE"); got != "" {
 		t.Fatal("generic validation must not receive vulnerability-only Planner spec")
 	}
-	if got := plannerExecutionModeSpec("只验证漏洞，不需要getshell"); !strings.Contains(got, "不把建立 Shell") {
+	if got := plannerExecutionModeSpec("只验证漏洞，不需要getshell"); !strings.Contains(got, "Do not make Shell") {
 		t.Fatalf("vulnerability-only Planner spec missing: %q", got)
 	}
-	if got := goalExecutionModeSpec("仅复现漏洞", ""); !strings.Contains(got, "RCE、文件上传、反序列化") {
+	if got := goalExecutionModeSpec("仅复现漏洞", ""); !strings.Contains(got, "RCE, file upload, deserialization") {
 		t.Fatalf("vulnerability-only Goal spec missing: %q", got)
 	}
 	if got := goalExecutionModeSpec("获取交互 Shell", ""); got != "" {
@@ -48,12 +48,12 @@ func TestVulnDispatcherDualModeAndGoalContract(t *testing.T) {
 	prompt := VulnDispatcherDefaultPrompt
 	for _, required := range []string{
 		"execution_mode=vulnerability_only",
-		"不要求 WebShell、C2 或交互会话",
-		"description：写完整的七段执行说明",
-		"goal：写任务的最终进攻/交付目标",
-		"不默认生成单资产限制",
-		"完成目标",
-		"执行通道",
+		"without WebShell/C2/interactive access",
+		"description: seven clearly separated execution sections",
+		"goal: final deliverable",
+		"Do not assume a single-asset restriction",
+		"Completion:",
+		"Execution channels:",
 	} {
 		if !strings.Contains(prompt, required) {
 			t.Errorf("dispatcher prompt missing %q", required)

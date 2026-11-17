@@ -22,7 +22,7 @@ func TestVulnDispatcherDefaultPromptUsesStableTemplateKeys(t *testing.T) {
 	if !strings.Contains(prompt, "default_review_enabled") || strings.Contains(prompt, "一律继承父任务") {
 		t.Fatal("dispatcher prompt must describe parent review plus category defaults")
 	}
-	if !strings.Contains(prompt, "先全面收集主机、容器、网卡、路由") || !strings.Contains(prompt, "当前任务尚未执行就判定完成") {
+	if !strings.Contains(prompt, "gather host/container/interfaces/routes") || !strings.Contains(prompt, "before current-task work executes") {
 		t.Fatal("internal child tasks must collect information before claiming completion")
 	}
 	for _, forbidden := range []string{"可达性不等于授权", "范围外主机只做被动记录", "未获授权前不得对其发起攻击"} {
@@ -30,14 +30,14 @@ func TestVulnDispatcherDefaultPromptUsesStableTemplateKeys(t *testing.T) {
 			t.Fatalf("internal dispatcher prompt retained unwanted scope wording %q", forbidden)
 		}
 	}
-	if !strings.Contains(prompt, "内网渗透 · <立足点 host 或目标资产>") || !strings.Contains(prompt, "name：必须填写简短任务名") {
+	if !strings.Contains(prompt, "Internal Penetration Testing · <foothold host or target asset>") || !strings.Contains(prompt, "name: short") {
 		t.Fatal("dispatcher prompt must separate the short task name from the detailed description")
 	}
-	if !strings.Contains(prompt, "不复制父 task_constraints") || !strings.Contains(prompt, "不默认生成单资产限制") {
+	if !strings.Contains(prompt, "Do not assume a single-asset restriction or copy parent task_constraints") || !strings.Contains(prompt, "Do not assume a single-asset restriction") {
 		t.Fatal("dispatcher must inherit evidence without copying single-asset execution constraints")
 	}
 	// 单场景派发：只允许内网渗透；其余场景不得作为派发目标出现在提示词里。
-	if !strings.Contains(prompt, "planner_template_nkey=内网渗透") {
+	if !strings.Contains(prompt, "planner_template_nkey=\"internal-penetration-testing\"") {
 		t.Error("missing fixed internal-pentest template reference")
 	}
 	for _, scene := range []string{"权限提升", "漏洞利用", "漏洞挖掘", "代码审计"} {
@@ -50,7 +50,7 @@ func TestVulnDispatcherDefaultPromptUsesStableTemplateKeys(t *testing.T) {
 func TestResolveVulnDispatcherLegacyPlaceholders(t *testing.T) {
 	s := &Server{}
 	got := s.resolveVulnDispatcherPrompt("planner_template_id=【TPL_ID_内网渗透】")
-	if got != "planner_template_nkey=内网渗透" {
+	if got != "planner_template_nkey=internal-penetration-testing" {
 		t.Fatalf("unexpected legacy conversion: %s", got)
 	}
 }
@@ -63,7 +63,7 @@ func TestSpawnTaskRejectsAmbiguousTemplateReference(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !result.IsError || !strings.Contains(result.Flatten(), "互斥") {
+	if !result.IsError || !strings.Contains(result.Flatten(), "mutually exclusive") {
 		t.Fatalf("expected mutual-exclusion error, got %+v", result)
 	}
 }

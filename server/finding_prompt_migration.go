@@ -24,11 +24,11 @@ func (s *Server) upgradeExternalFindingPrompts() {
 		return
 	}
 	if err := s.applyExternalFindingPrompts(); err != nil {
-		log.Printf("[prompts] Finding 内置提示词迁移失败: %v", err)
+		log.Printf("[prompts] built-in Finding prompt migration failed: %v", err)
 		return
 	}
 	if err := s.m.pg.SetSetting(flag, "true"); err != nil {
-		log.Printf("[prompts] Finding 内置提示词迁移标记写入失败: %v", err)
+		log.Printf("[prompts] failed to write built-in Finding prompt migration marker: %v", err)
 	}
 }
 
@@ -36,31 +36,31 @@ func (s *Server) applyExternalFindingPrompts() error {
 	pg := s.m.pg
 	plannerTemplate, err := pg.GetPlannerTemplateByNKey(db.ExternalPentestTemplateName)
 	if err != nil {
-		return fmt.Errorf("读取外网 Planner 模板: %w", err)
+		return fmt.Errorf("Read external Planner template: %w", err)
 	}
 	workerTemplate, err := pg.GetWorkerTemplateByNKey(db.ExternalPentestTemplateName)
 	if err != nil {
-		return fmt.Errorf("读取外网 Worker 模板: %w", err)
+		return fmt.Errorf("Read external Worker template: %w", err)
 	}
 	if plannerTemplate == nil || workerTemplate == nil {
-		return fmt.Errorf("外网渗透内置模板尚未初始化")
+		return fmt.Errorf("Built-in external penetration testing templates have not been initialized")
 	}
 	seeds := agent.BuiltinPromptSeeds()
 	for _, key := range []string{"planner", "worker"} {
 		a, err := pg.GetAgentByKey(key)
 		if err != nil {
-			return fmt.Errorf("读取 %s Agent: %w", key, err)
+			return fmt.Errorf("Read %s Agent: %w", key, err)
 		}
 		if a == nil {
-			return fmt.Errorf("%s Agent 尚未初始化", key)
+			return fmt.Errorf("%s Agent has not been initialized", key)
 		}
 		current, err := pg.CurrentPrompt(a.ID)
 		if err != nil {
-			return fmt.Errorf("读取 %s 当前提示词: %w", key, err)
+			return fmt.Errorf("Read %s current prompt: %w", key, err)
 		}
 		if current != seeds[key] {
 			if _, err := pg.ResetPromptToDefault(a.ID, seeds[key]); err != nil {
-				return fmt.Errorf("升级 %s 当前提示词: %w", key, err)
+				return fmt.Errorf("Upgrade %s current prompt: %w", key, err)
 			}
 		}
 	}
@@ -71,19 +71,19 @@ func (s *Server) applyExternalFindingPrompts() error {
 	}
 	defer tx.Rollback()
 	if _, err := tx.Exec(`UPDATE planner_templates SET body=$1,updated_at=now() WHERE builtin AND nkey=$2`, seeds["planner"], db.ExternalPentestTemplateName); err != nil {
-		return fmt.Errorf("升级外网 Planner 模板: %w", err)
+		return fmt.Errorf("Upgrade external Planner template: %w", err)
 	}
 	if _, err := tx.Exec(`UPDATE worker_templates SET body=$1,updated_at=now() WHERE builtin AND nkey=$2`, seeds["worker"], db.ExternalPentestTemplateName); err != nil {
-		return fmt.Errorf("升级外网 Worker 模板: %w", err)
+		return fmt.Errorf("Upgrade external Worker template: %w", err)
 	}
 	if plannerTemplate.Body != "" && plannerTemplate.Body != seeds["planner"] {
 		if _, err := tx.Exec(`UPDATE tasks SET planner_prompt_override=$1 WHERE planner_prompt_override=$2`, seeds["planner"], plannerTemplate.Body); err != nil {
-			return fmt.Errorf("升级默认 Planner 任务快照: %w", err)
+			return fmt.Errorf("Upgrade default Planner task snapshots: %w", err)
 		}
 	}
 	if workerTemplate.Body != "" && workerTemplate.Body != seeds["worker"] {
 		if _, err := tx.Exec(`UPDATE tasks SET worker_prompt_override=$1 WHERE worker_prompt_override=$2`, seeds["worker"], workerTemplate.Body); err != nil {
-			return fmt.Errorf("升级默认 Worker 任务快照: %w", err)
+			return fmt.Errorf("Upgrade default Worker task snapshots: %w", err)
 		}
 	}
 	return tx.Commit()

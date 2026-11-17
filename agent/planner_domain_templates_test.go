@@ -48,12 +48,12 @@ func TestPlannerDomainSeedsValid(t *testing.T) {
 // 公共骨架六条不变量的关键锚点必须在每套模板中出现（防领域层改动骨架）。
 func TestPlannerDomainSeedsKeepSkeleton(t *testing.T) {
 	anchors := []string{
-		"你是规划者、不是执行者",        // ① 角色契约
-		"必须】产出至少一个",             // ② 硬底线
-		"prove_goal(goal_id",          // ③ 判定目标
-		"完整态势已附在本轮用户输入",      // ④ 态势消费
-		"recent_done",                  // ⑤ 方向纪律
-		"add_intent",                   // ⑥ 提交格式
+		"You are the planner, not executor",                // ① 角色契约
+		"produce at least one intent",                      // ② 硬底线
+		"prove_goal(goal_id",                               // ③ 判定目标
+		"The complete situation is attached to this round", // ④ 态势消费
+		"recent_done",                                      // ⑤ 方向纪律
+		"add_intent",                                       // ⑥ 提交格式
 	}
 	for name, body := range PlannerDomainSeeds() {
 		for _, a := range anchors {

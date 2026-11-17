@@ -19,7 +19,7 @@ const workerTopologyFactMigrationKey = "worker_topology_fact_edge_v2"
 // internalWorkerTopologyFactRule 替换后的内网渗透规则：拓扑关系由 record_fact 的
 // topology 字段承载（discovery/src_ip/dst_ips/kind），拓扑边由 fact 自动派生——
 // record_topology_relation 工具已删除。与 agent/worker_domain_templates.go 的规则行保持一致。
-const internalWorkerTopologyFactRule = `- 确认网卡、路由、容器网络或会话连接后，用 record_fact 保存证据，并在 topology 字段写拓扑关系：discovery=如何发现的（≤20字写手段，如"nmap 扫到445开放"/"ARP 扫描发现存活"/"docker 网桥推断"，不写结论）、src_ip=父节点（立足点）、dst_ips=目标内网 IP（多台=同方式同父同 kind 的一批）、kind=solid（发现漏洞或横向移动成功）| reachable（仅可达，缺省）。不同发现方式或不同父节点要拆成不同 fact；拓扑边由 fact 自动生成。找不到证据就保持独立节点，禁止因同任务、同网段或存在入口而猜测连线。`
+const internalWorkerTopologyFactRule = `- After confirming network interfaces, routes, container networks, or session connections, save evidence with record_fact and describe the relationship in topology: discovery=how it was discovered (brief method, such as "nmap found port 445 open", "ARP scan found a live host", or "inferred from a Docker bridge", not a conclusion); src_ip=parent node (foothold); dst_ips=target internal IPs (batch only targets sharing the same method, parent, and kind); kind=solid (a vulnerability was found or lateral movement succeeded) | reachable (reachability only, default). Use separate facts for different discovery methods or parents. Topology edges are derived automatically from facts. Without evidence, keep nodes independent; never infer a connection merely from a shared task, subnet, or entry point.`
 
 // upgradeWorkerTopologyFactPrompt 把内置「内网渗透」worker 模板和已存在任务的
 // worker 提示词快照里的旧 record_topology_relation 规则替换为 fact topology 规则。

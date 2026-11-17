@@ -22,26 +22,26 @@ func (s *Server) upgradeVulnDispatcherFindingPrompt() {
 	}
 	a, err := s.m.pg.GetAgentByKey("vuln_dispatcher")
 	if err != nil {
-		log.Printf("[vuln_dispatcher] 读取 Planner 派发提示词迁移对象失败: %v", err)
+		log.Printf("[vuln_dispatcher] failed to read Planner dispatch prompt migration targets: %v", err)
 		return
 	}
 	if a != nil {
 		current, err := s.m.pg.CurrentPrompt(a.ID)
 		if err != nil {
-			log.Printf("[vuln_dispatcher] 读取当前提示词失败: %v", err)
+			log.Printf("[vuln_dispatcher] failed to read current prompt: %v", err)
 			return
 		}
 		defaultLineage := strings.Contains(current, "漏洞派发 agent") &&
 			strings.Contains(current, "审核开关由人决定") && strings.Contains(current, "去重的键是")
 		if defaultLineage && !strings.Contains(current, "dispatch_finding_to_agent 显式调用") {
 			if _, err := s.m.pg.ResetPromptToDefault(a.ID, s.resolveVulnDispatcherPrompt(agent.VulnDispatcherDefaultPrompt)); err != nil {
-				log.Printf("[vuln_dispatcher] Planner 派发提示词迁移失败: %v", err)
+				log.Printf("[vuln_dispatcher] Planner dispatch prompt migration failed: %v", err)
 				return
 			}
 		}
 	}
 	if err := s.m.pg.SetSetting(flag, "true"); err != nil {
-		log.Printf("[vuln_dispatcher] Planner 派发提示词迁移标记失败: %v", err)
+		log.Printf("[vuln_dispatcher] failed to mark Planner dispatch prompt migration: %v", err)
 	}
 }
 
@@ -54,26 +54,26 @@ func (s *Server) upgradeVulnDispatcherIndependentGraph() {
 	}
 	a, err := s.m.pg.GetAgentByKey("vuln_dispatcher")
 	if err != nil {
-		log.Printf("[vuln_dispatcher] 读取独立探索链提示词迁移对象失败: %v", err)
+		log.Printf("[vuln_dispatcher] failed to read independent-exploration-chain prompt migration targets: %v", err)
 		return
 	}
 	if a != nil {
 		current, err := s.m.pg.CurrentPrompt(a.ID)
 		if err != nil {
-			log.Printf("[vuln_dispatcher] 读取当前提示词失败: %v", err)
+			log.Printf("[vuln_dispatcher] failed to read current prompt: %v", err)
 			return
 		}
 		defaultLineage := strings.Contains(current, "漏洞派发 agent") &&
 			strings.Contains(current, "审核开关由人决定") && strings.Contains(current, "去重的键是")
 		if defaultLineage && strings.Contains(current, "source_task_ids = [触发任务 id]") {
 			if _, err := s.m.pg.ResetPromptToDefault(a.ID, s.resolveVulnDispatcherPrompt(agent.VulnDispatcherDefaultPrompt)); err != nil {
-				log.Printf("[vuln_dispatcher] 独立探索链提示词迁移失败: %v", err)
+				log.Printf("[vuln_dispatcher] independent-exploration-chain prompt migration failed: %v", err)
 				return
 			}
 		}
 	}
 	if err := s.m.pg.SetSetting(flag, "true"); err != nil {
-		log.Printf("[vuln_dispatcher] 独立探索链提示词迁移标记失败: %v", err)
+		log.Printf("[vuln_dispatcher] failed to mark independent-exploration-chain prompt migration: %v", err)
 	}
 }
 
@@ -86,13 +86,13 @@ func (s *Server) upgradePlannerFindingDispatch() {
 		return
 	}
 	if _, err := s.m.pg.Exec(`UPDATE agents SET description=$1 WHERE key='vuln_dispatcher' AND description=$2`, vulnDispatcherDescription, vulnDispatcherDescriptionV1); err != nil {
-		log.Printf("[finding-dispatch] 更新 Dispatcher 描述失败: %v", err)
+		log.Printf("[finding-dispatch] failed to update Dispatcher description: %v", err)
 		return
 	}
 	for _, agentKey := range []string{"vuln_dispatcher", "trace_cleaner"} {
 		triggers, err := s.m.pg.ListTriggersFor(agentKey)
 		if err != nil {
-			log.Printf("[finding-dispatch] 读取触发器失败: agent=%s err=%v", agentKey, err)
+			log.Printf("[finding-dispatch] failed to read triggers: agent=%s err=%v", agentKey, err)
 			return
 		}
 		for _, tr := range triggers {
@@ -109,12 +109,12 @@ func (s *Server) upgradePlannerFindingDispatch() {
 				continue
 			}
 			if err := s.m.pg.UpdateTrigger(tr); err != nil {
-				log.Printf("[finding-dispatch] 关闭旧 Finding 入口失败: agent=%s trigger=%d err=%v", agentKey, tr.ID, err)
+				log.Printf("[finding-dispatch] failed to disable legacy Finding entry: agent=%s trigger=%d err=%v", agentKey, tr.ID, err)
 				return
 			}
 		}
 	}
 	if err := s.m.pg.SetSetting(flag, "true"); err != nil {
-		log.Printf("[finding-dispatch] 写入编排迁移标记失败: %v", err)
+		log.Printf("[finding-dispatch] failed to write orchestration migration marker: %v", err)
 	}
 }

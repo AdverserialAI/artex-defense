@@ -45,7 +45,7 @@ func (s *Server) attachTaskAssets(w http.ResponseWriter, r *http.Request) {
 	request.SourceSummary = strings.TrimSpace(request.SourceSummary)
 	taskID, _ := parseTaskID(task.ID)
 	if request.Scope != nil && len(request.AssetIDs) > 0 {
-		writeErr(w, http.StatusBadRequest, "scope 与 asset_ids 不能同时提交")
+		writeErr(w, http.StatusBadRequest, "scope and asset_ids cannot be submitted together")
 		return
 	}
 	if request.Scope != nil {

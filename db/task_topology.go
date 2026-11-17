@@ -133,7 +133,7 @@ func normalizeTopologyRelation(rel TopologyRelationInput) (TopologyRelationInput
 	switch rel.Kind {
 	case topologyKindSolid, topologyKindReachable:
 	default:
-		return rel, fmt.Errorf("relation kind must be %q (发现漏洞或横向移动成功) or %q (仅可达)", topologyKindSolid, topologyKindReachable)
+		return rel, fmt.Errorf("relation kind must be %q (confirmed vulnerability or successful lateral movement) or %q (reachable only)", topologyKindSolid, topologyKindReachable)
 	}
 	if rel.EvidenceRef == "" || utf8.RuneCountInString(rel.EvidenceRef) > topologyMaxEvidenceRunes {
 		return rel, fmt.Errorf("agent relation requires an evidence reference")

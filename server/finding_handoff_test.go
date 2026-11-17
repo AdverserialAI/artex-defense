@@ -21,8 +21,8 @@ func TestFindingTriggerContextIncludesFindingID(t *testing.T) {
 func TestVulnDispatcherHandoffAndGoalContract(t *testing.T) {
 	p := agent.VulnDispatcherDefaultPrompt
 	for _, want := range []string{
-		"append_finding_to_task", "already_appended", "已有的对应内网渗透任务",
-		"description：写完整的七段执行说明", "获取内网最高权限", "定位管理员、域控或其他关键管理主机并横向移动",
+		"append_finding_to_task", "already_appended", "another internal task",
+		"description: seven clearly separated execution sections", "highest internal privileges", "administrator/controller/key management hosts, and lateral paths",
 	} {
 		if !strings.Contains(p, want) {
 			t.Fatalf("Dispatcher 缺少规则 %q", want)
@@ -145,7 +145,7 @@ func TestAppendFindingToTaskSameAsset(t *testing.T) {
 	}
 
 	child.CategoryName = "外网渗透"
-	if got, _ := call(findingID); !strings.Contains(got, "不是内网渗透") {
+	if got, _ := call(findingID); !strings.Contains(got, "not an internal penetration testing") {
 		t.Fatalf("未拒绝非内网任务: %s", got)
 	}
 	child.CategoryName = "内网渗透"

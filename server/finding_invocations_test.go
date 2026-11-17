@@ -201,14 +201,14 @@ func TestDispatchFindingToAgentRejectsInvalidCalls(t *testing.T) {
 		reason  string
 		wantErr string
 	}{
-		{name: "无 planner 任务上下文", ctx: context.Background(), key: "fitest_disabled", finding: findingID, reason: "r", wantErr: "缺少 planner 任务上下文"},
-		{name: "空 agent_key", ctx: fiPlannerCtx(taskID), key: "   ", finding: findingID, reason: "r", wantErr: "必填"},
-		{name: "不存在的 agent key", ctx: fiPlannerCtx(taskID), key: "fitest_no_such_agent", finding: findingID, reason: "r", wantErr: "目标 Agent 不存在"},
-		{name: "builtin worker 目标", ctx: fiPlannerCtx(taskID), key: "worker", finding: findingID, reason: "r", wantErr: "内置"},
-		{name: "builtin planner 目标", ctx: fiPlannerCtx(taskID), key: "planner", finding: findingID, reason: "r", wantErr: "内置"},
-		{name: "空 reason", ctx: fiPlannerCtx(taskID), key: "fitest_disabled", finding: findingID, reason: "  ", wantErr: "必填"},
-		{name: "跨任务 finding", ctx: fiPlannerCtx(taskID), key: "fitest_disabled", finding: otherFindingID, reason: "r", wantErr: "不属于当前 planner 任务"},
-		{name: "disabled agent", ctx: fiPlannerCtx(taskID), key: "fitest_disabled", finding: findingID, reason: "r", wantErr: "已禁用"},
+		{name: "无 planner 任务上下文", ctx: context.Background(), key: "fitest_disabled", finding: findingID, reason: "r", wantErr: "Missing Planner task context"},
+		{name: "空 agent_key", ctx: fiPlannerCtx(taskID), key: "   ", finding: findingID, reason: "r", wantErr: "required"},
+		{name: "不存在的 agent key", ctx: fiPlannerCtx(taskID), key: "fitest_no_such_agent", finding: findingID, reason: "r", wantErr: "Target Agent does not exist"},
+		{name: "builtin worker 目标", ctx: fiPlannerCtx(taskID), key: "worker", finding: findingID, reason: "r", wantErr: "built-in"},
+		{name: "builtin planner 目标", ctx: fiPlannerCtx(taskID), key: "planner", finding: findingID, reason: "r", wantErr: "built-in"},
+		{name: "空 reason", ctx: fiPlannerCtx(taskID), key: "fitest_disabled", finding: findingID, reason: "  ", wantErr: "required"},
+		{name: "跨任务 finding", ctx: fiPlannerCtx(taskID), key: "fitest_disabled", finding: otherFindingID, reason: "r", wantErr: "does not belong to the current Planner task"},
+		{name: "disabled agent", ctx: fiPlannerCtx(taskID), key: "fitest_disabled", finding: findingID, reason: "r", wantErr: "disabled"},
 	}
 	for _, tc := range rejected {
 		t.Run(tc.name, func(t *testing.T) {
@@ -250,7 +250,7 @@ func TestDispatchFindingToAgentRejectsInvalidCalls(t *testing.T) {
 		}
 	}
 	out, isErr := fiDispatch(t, s, fiPlannerCtx(taskID), "trace_cleaner", findingID, "投放事实已确认")
-	if !isErr || !strings.Contains(out, "目标 Agent 不存在") {
+	if !isErr || !strings.Contains(out, "Target Agent does not exist") {
 		t.Fatalf("不存在的 trace_cleaner 应报不存在错误: %s", out)
 	}
 	if a, err := m.pg.GetAgentByKey("trace_cleaner"); err != nil {
@@ -391,7 +391,7 @@ func TestDispatchFindingMessageAlwaysCarriesStructuredFields(t *testing.T) {
 	msg := finalTriggerMessage(item)
 	for _, want := range []string{
 		"固定触发正文：无占位符，请评估处置。", // trigger message 原文保留
-		"【本次由 planner 确认处置前提后显式派发】",
+		"[Explicit dispatch after the Planner confirmed handling prerequisites]",
 		"VulnClass: " + finding.VulnClass,
 		"Severity: " + finding.Severity,
 		"Summary: " + summary,

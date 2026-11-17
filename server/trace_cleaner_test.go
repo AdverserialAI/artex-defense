@@ -47,7 +47,7 @@ func TestSeedTraceCleanerAgent(t *testing.T) {
 	if a.Builtin || !a.Enabled || a.TriggerRunMode != "serial" || a.TriggerMergeMode != "by_task" || a.TriggerMaxParallel != 0 {
 		t.Fatalf("unexpected agent defaults: %+v", a)
 	}
-	if !strings.Contains(a.Description, "显式派发") {
+	if !strings.Contains(a.Description, "Explicit Planner dispatch") {
 		t.Fatalf("description does not expose the explicit-dispatch entry: %q", a.Description)
 	}
 	prompt, err := pg.CurrentPrompt(a.ID)

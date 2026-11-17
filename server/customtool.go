@@ -62,19 +62,19 @@ func (s *Server) pgCreateCustomTool(w http.ResponseWriter, r *http.Request) {
 	}
 	req.Key = strings.TrimSpace(req.Key)
 	if !reToolKey.MatchString(req.Key) {
-		writeErr(w, 400, "key 需小写字母开头，仅含小写字母/数字/下划线")
+		writeErr(w, 400, "key must start with a lowercase letter and contain only lowercase letters, digits, or underscores")
 		return
 	}
 	if req.Kind != "command" && req.Kind != "script" && req.Kind != "http" && req.Kind != "shell" {
-		writeErr(w, 400, "kind 需为 command / script / http / shell")
+		writeErr(w, 400, "kind must be command / script / http / shell")
 		return
 	}
 	if req.Kind == "http" && !hasSchemaProps(req.Schema) {
-		writeErr(w, 400, "http 工具必须提供参数 JSON Schema(不能留空)")
+		writeErr(w, 400, "HTTP tools require a parameter JSON Schema")
 		return
 	}
 	if exist, _ := pg.GetTool(req.Key); exist != nil {
-		writeErr(w, 409, "该 key 已存在(内置或自定义工具)")
+		writeErr(w, 409, "This key already exists (built-in or custom tool)")
 		return
 	}
 	if err := pg.CreateCustomTool(&db.Tool{
@@ -99,7 +99,7 @@ func (s *Server) pgUpdateCustomTool(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if existing == nil || existing.System {
-		writeErr(w, 400, "只能编辑自定义工具")
+		writeErr(w, 400, "Only custom tools can be edited")
 		return
 	}
 	var req customToolReq
@@ -107,11 +107,11 @@ func (s *Server) pgUpdateCustomTool(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if req.Kind != "command" && req.Kind != "script" && req.Kind != "http" && req.Kind != "shell" {
-		writeErr(w, 400, "kind 需为 command / script / http / shell")
+		writeErr(w, 400, "kind must be command / script / http / shell")
 		return
 	}
 	if req.Kind == "http" && !hasSchemaProps(req.Schema) {
-		writeErr(w, 400, "http 工具必须提供参数 JSON Schema(不能留空)")
+		writeErr(w, 400, "HTTP tools require a parameter JSON Schema")
 		return
 	}
 	if err := pg.UpdateCustomTool(&db.Tool{
@@ -175,10 +175,10 @@ func (s *Server) pgTestCustomTool(w http.ResponseWriter, r *http.Request) {
 	case "http":
 		res, _ = s.runHTTPTool(ctx, req.Exec, params, tc)
 	case "shell":
-		writeErr(w, 400, "shell 类型工具是 bash 环境声明，无可执行内容")
+		writeErr(w, 400, "A shell tool declares the Bash environment and has no executable content")
 		return
 	default:
-		writeErr(w, 400, "未知工具类型: "+req.Kind)
+		writeErr(w, 400, "Unknown tool type: "+req.Kind)
 		return
 	}
 	writeJSON(w, 200, map[string]any{"output": res.Flatten(), "is_error": res.IsError})
@@ -213,23 +213,23 @@ func validatePythonInterp(p string) error {
 		return nil // 允许清空=恢复自动检测
 	}
 	if !filepath.IsAbs(p) {
-		return fmt.Errorf("必须是绝对路径")
+		return fmt.Errorf("An absolute path is required")
 	}
 	rawBase := strings.ToLower(filepath.Base(p))
 	base := strings.TrimSuffix(rawBase, ".exe")
 	ok := base == "python" || base == "pypy" || base == "pypy3" || strings.HasPrefix(base, "python3")
 	if !ok {
-		return fmt.Errorf("解释器必须是 python（basename 形如 python / python3 / python3.11），当前: %s", base)
+		return fmt.Errorf("Interpreter must be Python (basename such as python / python3 / python3.11); got: %s", base)
 	}
 	fi, err := os.Stat(p)
 	if err != nil {
-		return fmt.Errorf("路径不存在或不可读: %v", err)
+		return fmt.Errorf("Path does not exist or is unreadable: %v", err)
 	}
 	if fi.IsDir() {
-		return fmt.Errorf("路径是目录")
+		return fmt.Errorf("Path is a directory")
 	}
 	if fi.Mode()&0o111 == 0 && !strings.HasSuffix(rawBase, ".exe") {
-		return fmt.Errorf("文件不可执行")
+		return fmt.Errorf("File is not executable")
 	}
 	return nil
 }
@@ -243,7 +243,7 @@ func (s *Server) pythonInterpreter() string {
 		if validatePythonInterp(v) == nil {
 			return v
 		}
-		xlog.Warnf("[tools] 存量 python_interpreter 不合法已忽略: %q", v)
+		xlog.Warnf("[tools] ignoring invalid stored python_interpreter: %q", v)
 	}
 	return detectPython()
 }
@@ -256,7 +256,7 @@ func (s *Server) seedPythonInterpreter() {
 	}
 	if p := detectPython(); p != "" {
 		_ = s.m.pg.SetSetting(settingPythonInterp, p)
-		log.Printf("[custom-tool] 自动检测到 python 解释器: %s", p)
+		log.Printf("[custom-tool] automatically detected Python interpreter: %s", p)
 	}
 }
 
@@ -328,7 +328,7 @@ func (s *Server) buildCustomTool(t *db.Tool) actool.CoreTool {
 		case "http":
 			return s.runHTTPTool(ctx, execRaw, params, tc)
 		default:
-			return actool.Errorf("未知自定义工具类型: " + kind), nil
+			return actool.Errorf("Unknown custom tool type: " + kind), nil
 		}
 	}
 	return actool.Build(actool.Spec{
@@ -368,7 +368,7 @@ func ensureSchema(raw json.RawMessage) map[string]any {
 	return map[string]any{
 		"type": "object",
 		"properties": map[string]any{
-			"args": map[string]any{"type": "string", "description": "命令/参数(自由文本)"},
+			"args": map[string]any{"type": "string", "description": "Command/arguments (free text)"},
 		},
 	}
 }
@@ -379,7 +379,7 @@ func (s *Server) runCommandTool(ctx context.Context, execRaw json.RawMessage, pa
 	var spec commandExec
 	_ = json.Unmarshal(execRaw, &spec)
 	if strings.TrimSpace(spec.Command) == "" {
-		return actool.Errorf("command 为空"), nil
+		return actool.Errorf("command is empty"), nil
 	}
 	cmd := renderTemplate(spec.Command, params, shellQuote)
 	// 复用 Bash 也在用的底层 run(经 Bash CoreTool.Call):自动继承安全 floor/超时/
@@ -399,11 +399,11 @@ func (s *Server) runScriptTool(ctx context.Context, key string, execRaw json.Raw
 	var spec scriptExec
 	_ = json.Unmarshal(execRaw, &spec)
 	if strings.TrimSpace(spec.Code) == "" {
-		return actool.Errorf("script code 为空"), nil
+		return actool.Errorf("script code is empty"), nil
 	}
 	interp := s.pythonInterpreter()
 	if interp == "" {
-		return actool.Errorf("未配置且未检测到 python 解释器(在系统配置里设置)"), nil
+		return actool.Errorf("No Python interpreter configured or detected (set it in system settings)"), nil
 	}
 	workDir := s.m.dir
 	var sessionEnv []string
@@ -455,7 +455,7 @@ func execPython(ctx context.Context, interp, key, code string, params map[string
 	out, err := c.CombinedOutput()
 	body := string(out)
 	if runCtx.Err() == context.DeadlineExceeded {
-		body += "\n... [超时终止] ..."
+		body += "\n... [Terminated after timeout] ..."
 	} else if err != nil {
 		body += "\n[exit: " + err.Error() + "]"
 	}
@@ -473,7 +473,7 @@ func (s *Server) runHTTPTool(ctx context.Context, execRaw json.RawMessage, param
 	}
 	rawURL := renderTemplate(spec.URL, params, identity)
 	if strings.TrimSpace(rawURL) == "" {
-		return actool.Errorf("http url 为空"), nil
+		return actool.Errorf("HTTP URL is empty"), nil
 	}
 	var bodyReader io.Reader
 	if spec.Body != "" {
@@ -494,7 +494,7 @@ func (s *Server) runHTTPTool(ctx context.Context, execRaw json.RawMessage, param
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return actool.Errorf("请求失败: " + err.Error()), nil
+		return actool.Errorf("Request failed: " + err.Error()), nil
 	}
 	defer resp.Body.Close()
 	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))

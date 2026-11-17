@@ -40,7 +40,7 @@ function prefillRejectReason(it: ProposedIntent | null): string {
 }
 
 // System events (pre-screen records, approve/reject notices, etc.) render as centered capsules, not chat bubbles.
-const SYS_RE = /^(预审|意图 #|【系统】)/;
+const SYS_RE = /^(Pre-screen|Intent #|\[System\]|\u9884\u5ba1|\u610f\u56fe #|\u3010\u7cfb\u7edf\u3011)/;
 
 function fmtTime(unixSec: number): string {
 	const d = new Date(unixSec * 1000);

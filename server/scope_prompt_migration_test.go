@@ -84,7 +84,7 @@ func TestUpgradeScopeAuthorizationPrompts(t *testing.T) {
 
 	// vuln_dispatcher 是系统预置的 builtin=false agent；存量库可能已存在，也可能需在测试里补建。
 	// 新建时 ensureScopeRollbackAgent 自己注册删除清理，随后 forceScopeRollbackPrompt 的恢复清理会先执行。
-	if _, created := ensureScopeRollbackAgent(t, pg, "vuln_dispatcher", "漏洞派发", "scope rollback test"); created {
+	if _, created := ensureScopeRollbackAgent(t, pg, "vuln_dispatcher", "Finding Dispatcher", "scope rollback test"); created {
 		t.Log("测试库缺少 vuln_dispatcher，已临时创建")
 	}
 	dispatcherAgent := forceScopeRollbackPrompt(t, pg, "vuln_dispatcher", "旧无范围限制 dispatcher 系统提示词", "system")
@@ -409,7 +409,7 @@ func TestScopeRollbackRestoresDefaultDispatcherMessage(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer pg.Close()
-	ensureScopeRollbackAgent(t, pg, "vuln_dispatcher", "漏洞派发", "scope rollback test")
+	ensureScopeRollbackAgent(t, pg, "vuln_dispatcher", "Finding Dispatcher", "scope rollback test")
 
 	// Preserve any pre-existing trigger rows on a shared development database.
 	existing, err := pg.ListTriggersFor("vuln_dispatcher")

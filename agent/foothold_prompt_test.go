@@ -7,11 +7,11 @@ import (
 
 func TestGoalAndExternalPlannerFootholdSemantics(t *testing.T) {
 	goalRules := []string{
-		"目标类型与 Shell 意图语义匹配",
-		"强 Shell/立足点意图",
-		"弱权限词不能单独判定为 getshell",
-		"只有检测/验证意图时按实际漏洞分类",
-		"WebShell、反弹 Shell、C2 是可选实现路径",
+		"Match goal types to Shell intent semantically",
+		"Strong Shell/foothold intent",
+		"These words alone do not imply getshell",
+		"Classify by the actual vulnerability",
+		"WebShell, reverse Shell, and C2 are alternative implementation paths",
 	}
 	for _, rule := range goalRules {
 		if !strings.Contains(goalsDefaultTmpl, rule) {
@@ -20,12 +20,12 @@ func TestGoalAndExternalPlannerFootholdSemantics(t *testing.T) {
 	}
 
 	plannerRules := []string{
-		"Getshell 目标验收与证据语义匹配（仅 vulnclass=getshell）",
-		"只有 webshell、reverse_shell 或 getshell 类型的确认 Finding",
-		"攻击机本地 Shell、监听端口启动不算目标上线",
-		"均不能单独证明 getshell",
-		"它们可以完成相应的 rce、file_upload、deserialization、sqli 或权限验证目标",
-		"调用 goal_met 前同样检查是否存在未完成的 getshell 目标",
+		"For vulnclass=getshell goals",
+		"Only a confirmed webshell/reverse_shell/getshell Finding",
+		"An attacker-local Shell or started listener is not a target session",
+		"alone does not prove getshell",
+		"It may satisfy the corresponding rce/file_upload/deserialization/sqli/privilege-verification goal",
+		"The same acceptance checks apply before goal_met",
 	}
 	for _, rule := range plannerRules {
 		if !strings.Contains(plannerDefaultTmpl, rule) {
@@ -35,7 +35,7 @@ func TestGoalAndExternalPlannerFootholdSemantics(t *testing.T) {
 }
 
 func TestFootholdPromptChangeIsLimitedToExternalPlanner(t *testing.T) {
-	const marker = "Getshell 目标验收与证据语义匹配"
+	const marker = "For vulnclass=getshell goals"
 	for name, body := range PlannerDomainSeeds() {
 		if strings.Contains(body, marker) {
 			t.Errorf("domain planner %q unexpectedly received external-only rule", name)

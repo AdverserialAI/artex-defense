@@ -45,7 +45,7 @@ func dropReason(err error) string {
 	if errors.As(err, &pgErr) {
 		switch pgErr.Code {
 		case "23503":
-			return "fk_violation(23503,父exploration不存在)"
+			return "fk_violation(23503,parent exploration does not exist)"
 		case "23505":
 			return "unique_violation(23505)"
 		default:
@@ -461,11 +461,11 @@ func (e *Engine) ControlWork(ctx context.Context, intentID int64, action string)
 	run := e.work[intentID]
 	if run == nil {
 		e.workMu.Unlock()
-		return fmt.Errorf("%w: 意图 %d 当前没有运行中的 work（可能已结束或未被领取）", errWorkControlConflict, intentID)
+		return fmt.Errorf("%w: intent %d has no running work (it may have finished or has not been claimed)", errWorkControlConflict, intentID)
 	}
 	if run.action != "" {
 		e.workMu.Unlock()
-		return fmt.Errorf("%w: 意图 %d 正在执行 %s 操作", errWorkControlConflict, intentID, run.action)
+		return fmt.Errorf("%w: intent %d is executing %s", errWorkControlConflict, intentID, run.action)
 	}
 	run.action = action
 	done := run.done
@@ -483,10 +483,10 @@ func (e *Engine) ControlWork(ctx context.Context, intentID int64, action string)
 		return err
 	case <-ctx.Done():
 		e.releaseWorkControl(intentID, run, action)
-		return fmt.Errorf("等待意图 %d %s 收尾: %w", intentID, action, ctx.Err())
+		return fmt.Errorf("Waiting for intent %d to finish %s: %w", intentID, action, ctx.Err())
 	case <-timer.C:
 		e.releaseWorkControl(intentID, run, action)
-		return fmt.Errorf("等待意图 %d %s 收尾: %w", intentID, action, context.DeadlineExceeded)
+		return fmt.Errorf("Waiting for intent %d to finish %s: %w", intentID, action, context.DeadlineExceeded)
 	}
 }
 
@@ -508,14 +508,14 @@ func transitionIntentState(store *db.ExplorationStore, intentID int64, state str
 		return err
 	}
 	if current == nil {
-		return fmt.Errorf("%w: 意图 %d 不存在或已删除", db.ErrIntentStateConflict, intentID)
+		return fmt.Errorf("%w: intent %d does not exist or has been deleted", db.ErrIntentStateConflict, intentID)
 	}
 	changed, err := store.CompareAndSetIntentState(intentID, current.State, state)
 	if err != nil {
 		return err
 	}
 	if !changed {
-		return fmt.Errorf("%w: 意图 %d 不再是 %s 状态", db.ErrIntentStateConflict, intentID, current.State)
+		return fmt.Errorf("%w: intent %d is no longer in state %s", db.ErrIntentStateConflict, intentID, current.State)
 	}
 	return nil
 }
@@ -525,13 +525,13 @@ func transitionIntentState(store *db.ExplorationStore, intentID int64, state str
 // re-plans — no kill. Errors if no work is currently running that intent.
 func (e *Engine) SteerWork(intentID int64, msg string) error {
 	if strings.TrimSpace(msg) == "" {
-		return fmt.Errorf("纠偏消息不能为空")
+		return fmt.Errorf("Correction message is required")
 	}
 	e.workMu.Lock()
 	running := e.work[intentID] != nil
 	e.workMu.Unlock()
 	if !running {
-		return fmt.Errorf("意图 %d 当前没有运行中的 work（可能已结束或未被领取）", intentID)
+		return fmt.Errorf("Intent %d has no running work (it may have finished or has not been claimed)", intentID)
 	}
 	e.steerMu.Lock()
 	e.steerBox[intentID] = append(e.steerBox[intentID], msg)
@@ -592,8 +592,8 @@ const defaultEmptyTurnNudges = 2
 // 的 SEThinkingDelta)，所以 thinking-only 不算空。何况那层是原样重发整个 prompt，
 // 对这种由上下文形状决定的空转，重发只会让模型再想一遍。这里换成追加一条指令，让它
 // 带着已经产出的思考继续，输入变了才有理由给出不同的行为。
-const emptyTurnNudge = "【空转提醒】你上一轮只输出了思考过程，既没有给出正文回复，也没有调用任何工具，" +
-	"这一轮等于没有产出。请直接执行你刚才想好的下一步：要么调用工具，要么给出结论文字。不要重复思考。"
+const emptyTurnNudge = "[Idle-turn reminder] Your last turn contained only reasoning, with no response text or tool calls." +
+	"That turn produced no output. Execute the next step you just planned: call a tool or provide a written conclusion. Do not repeat your reasoning."
 
 // isThinkingOnlyTurn reports whether the latest assistant turn produced neither
 // text nor a tool call — i.e. the model spent the whole round thinking.
@@ -610,8 +610,8 @@ func isThinkingOnlyTurn(messages []llm.Message) bool {
 
 func (h steerHooks) PreToolUse(ctx context.Context, name string, input []byte) (bool, string, []byte) {
 	if msg, ok := h.drain(); ok {
-		return true, "【规划者实时纠偏】" + msg +
-			"\n（这是规划者对本意图的即时指令；本次工具调用未执行，请据此调整下一步。若与你当前打算冲突，以此为准。）", nil
+		return true, "[Live planner correction]" + msg +
+			"\n(This is the planner's immediate instruction for this intent. The current tool call was not executed. Adjust your next step accordingly; this instruction takes precedence over your current plan.)", nil
 	}
 	if h.inner != nil {
 		return h.inner.PreToolUse(ctx, name, input)
@@ -645,10 +645,10 @@ func (h steerHooks) Stop(ctx context.Context, messages []llm.Message) (bool, []s
 	}
 	n := h.nudges.Add(1)
 	if n > int64(h.limit) {
-		log.Printf("[work %s] 空转回合(仅思考、无正文无工具)已达续跑上限 %d，放行收场", h.label, h.limit)
+		log.Printf("[work %s] reached idle-turn continuation limit %d (reasoning only, no response or tools); allowing termination", h.label, h.limit)
 		return prevent, blocking, msg
 	}
-	log.Printf("[work %s] 空转回合(仅思考、无正文无工具)，注入续跑指令 (%d/%d)", h.label, n, h.limit)
+	log.Printf("[work %s] idle turn (reasoning only, no response or tools); injecting continuation instruction (%d/%d)", h.label, n, h.limit)
 	return false, []string{emptyTurnNudge}, ""
 }
 
@@ -659,7 +659,7 @@ func (e *Engine) KillWork(intentID int64) error {
 	run := e.work[intentID]
 	e.workMu.Unlock()
 	if run == nil {
-		return fmt.Errorf("意图 %d 当前没有运行中的 work（可能已结束或未被领取）", intentID)
+		return fmt.Errorf("Intent %d has no running work (it may have finished or has not been claimed)", intentID)
 	}
 	run.cancel(agent.AbortKilledByPlanner)
 	return nil
@@ -686,13 +686,13 @@ func (e *Engine) emitActivity(t *Task, r db.Activity) db.Activity {
 		if isFKViolation(err) {
 			storeID := t.Store.ID()
 			if exists, refs, maxID, dErr := e.m.pg.ExplorationDiag(storeID); dErr != nil {
-				diag = fmt.Sprintf(" | FK诊断查询失败(store.expID=%d task.ExpID=%d): %v", storeID, t.ExpID, dErr)
+				diag = fmt.Sprintf(" | FK diagnostic query failed (store.expID=%d task.ExpID=%d): %v", storeID, t.ExpID, dErr)
 			} else {
-				diag = fmt.Sprintf(" | FK诊断: store.expID=%d task.ExpID=%d exploration存在=%v 引用它的task数=%d MAX(exploration.id)=%d",
+				diag = fmt.Sprintf(" | FK diagnostic: store.expID=%d task.ExpID=%d exploration_exists=%v referencing_tasks=%d MAX(exploration.id)=%d",
 					storeID, t.ExpID, exists, refs, maxID)
 			}
 		}
-		log.Printf("[activity] task %s 丢弃活动记录(该任务累计第 %d 条) worker=%s kind=%s tool=%s tuid=%s reason=%s summary=%q: %v%s",
+		log.Printf("[activity] task %s discarded activity (total discarded for task: %d) worker=%s kind=%s tool=%s tuid=%s reason=%s summary=%q: %v%s",
 			t.ID, n, r.Worker, r.Kind, r.Tool, r.ToolUseID, dropReason(err), preview(r.Summary, 80), err, diag)
 		e.touch(t.ID)
 		return r
@@ -717,12 +717,12 @@ func (e *Engine) appendActivity(t *Task, r db.Activity) (int64, error) {
 	for attempt := 1; attempt <= 3; attempt++ {
 		if id, err = t.Store.AppendActivity(r); err == nil {
 			if attempt > 1 {
-				log.Printf("[activity] task %s 写入第 %d 次重试成功 (worker=%s kind=%s tool=%s)",
+				log.Printf("[activity] task %s write succeeded on retry %d (worker=%s kind=%s tool=%s)",
 					t.ID, attempt, r.Worker, r.Kind, r.Tool)
 			}
 			return id, nil
 		}
-		log.Printf("[activity] task %s 写入失败 (第 %d/3 次, worker=%s kind=%s tool=%s expID=%d): %v",
+		log.Printf("[activity] task %s write failed (attempt %d/3, worker=%s kind=%s tool=%s expID=%d): %v",
 			t.ID, attempt, r.Worker, r.Kind, r.Tool, t.Store.ID(), err)
 		time.Sleep(time.Duration(attempt) * 25 * time.Millisecond)
 	}
@@ -786,9 +786,9 @@ func (e *Engine) Run(ctx context.Context, t *Task) {
 	if t.WorkerCount > 0 {
 		workers = t.WorkerCount
 		// 【二开·P-LOG·S12】INFO 记覆盖生效值（排障：这个任务起了几个 worker）
-		log.Printf("[engine] task %s worker 池任务级覆盖生效：worker_count=%d（全局默认 %d）", t.ID, t.WorkerCount, e.m.Workers())
+		log.Printf("[engine] task %s worker pool override active: worker_count=%d (global default %d)", t.ID, t.WorkerCount, e.m.Workers())
 	} else {
-		xlog.Debugf("[engine] task %s worker 池跟随全局默认：%d（worker_count=0）", t.ID, workers)
+		xlog.Debugf("[engine] task %s worker pool using global default: %d (worker_count=0)", t.ID, workers)
 	}
 	// 【二开·P-TPL·S12】止
 	e.deleteMu.RLock()
@@ -842,13 +842,13 @@ func (e *Engine) Run(ctx context.Context, t *Task) {
 	// 待审意图等人放行/驳回后自然唤醒 planner，空 kick 只会让 planner 重复派单。
 	if e.shouldHoldPlannerForUncontrolledAgent(t) {
 		xlog.Oncef("planner-uncontrolled-hold-kick-"+t.ID, 5*time.Minute, xlog.LevelInfo,
-			"[engine] task %s 首轮规划 kick 跳过：存在未完成的免规划自定义 intent", t.ID)
+			"[engine] task %s skipped initial planning kick: unfinished custom intent exempt from planning", t.ID)
 	} else if has, _ := t.Store.HasActiveIntent(); !has {
 		if proposed, _ := t.Store.HasProposedIntent(); !proposed {
 			t.Notify() // kick the first planning round (acted on once LLM is ready)
 		} else {
 			// 【二开·P-LOG·S4a】INFO 记 kick 跳过（排障：任务建好为什么不自己跑）
-			log.Printf("[engine] task %s 首轮规划 kick 跳过：有待审意图（等人工放行/驳回后自然唤醒）", t.ID)
+			log.Printf("[engine] task %s skipped initial planning kick: intents await review (approval/rejection will wake the planner)", t.ID)
 		}
 	}
 	// 【二开·P-REVIEW·S4a】止
@@ -877,7 +877,7 @@ func (e *Engine) runPreAgentStage(ctx context.Context, t *Task) bool {
 		seed, err := t.Store.CustomSeedIntent(t.PreAgent)
 		if err != nil {
 			xlog.Oncef("pre-agent-seed-"+t.ID, 5*time.Minute, xlog.LevelError,
-				"[executor] task %s 查询首个种子失败: %v", t.ID, err)
+				"[executor] task %s failed to query first seed: %v", t.ID, err)
 			if sleepCtx(ctx, 800*time.Millisecond) {
 				return false
 			}
@@ -889,7 +889,7 @@ func (e *Engine) runPreAgentStage(ctx context.Context, t *Task) bool {
 		switch seed.State {
 		case "proposed", "open":
 			if e.preAgentFn == nil {
-				xlog.Errorf("[executor] task %s 没有 pre_agent 对话入口，保持种子 %s", t.ID, seed.State)
+				xlog.Errorf("[executor] task %s has no pre_agent conversation entry; retaining seed %s", t.ID, seed.State)
 				return false
 			}
 			if !e.beginTaskOperation(t.ID) {
@@ -906,7 +906,7 @@ func (e *Engine) runPreAgentStage(ctx context.Context, t *Task) bool {
 			}()
 			if runErr != nil {
 				xlog.Oncef("pre-agent-conversation-"+t.ID, 5*time.Minute, xlog.LevelError,
-					"[executor] task %s 首个意图对话执行失败: %v", t.ID, runErr)
+					"[executor] task %s first-intent conversation execution failed: %v", t.ID, runErr)
 			}
 			if !claimed {
 				if taskExecutionPaused(context.Cause(runCtx)) || e.IsPaused(t.ID) {
@@ -918,7 +918,7 @@ func (e *Engine) runPreAgentStage(ctx context.Context, t *Task) bool {
 				latest, readErr := t.Store.CustomSeedIntent(t.PreAgent)
 				if readErr != nil {
 					xlog.Oncef("pre-agent-seed-"+t.ID, 5*time.Minute, xlog.LevelError,
-						"[executor] task %s 对话后查询种子失败: %v", t.ID, readErr)
+						"[executor] task %s failed to query seed after conversation: %v", t.ID, readErr)
 					if sleepCtx(ctx, 800*time.Millisecond) {
 						return false
 					}
@@ -947,7 +947,7 @@ func (e *Engine) runPreAgentStage(ctx context.Context, t *Task) bool {
 				return false
 			}
 		default:
-			xlog.Errorf("[executor] task %s 首个种子状态 %q 不可执行", t.ID, seed.State)
+			xlog.Errorf("[executor] task %s first seed state %q is not executable", t.ID, seed.State)
 			return false
 		}
 	}
@@ -986,7 +986,7 @@ func (e *Engine) shouldHoldPlannerForUncontrolledAgent(t *Task) bool {
 	hold, err := t.Store.HasPendingUncontrolledCustomIntent()
 	if err != nil {
 		xlog.Oncef("planner-uncontrolled-hold-error-"+t.ID, 5*time.Minute, xlog.LevelError,
-			"[engine] task %s 不受 Planner 控制门控查询失败，暂停自动规划: %v", t.ID, err)
+			"[engine] task %s failed to query planner-independent gate; pausing automatic planning: %v", t.ID, err)
 		return true
 	}
 	return hold
@@ -1053,7 +1053,7 @@ func (e *Engine) plannerLoopWithInterval(ctx context.Context, t *Task, interval 
 		if e.shouldHoldPlannerForUncontrolledAgent(t) {
 			t.drainTriggersRetaining("revision_requested", "hint")
 			xlog.Oncef("planner-uncontrolled-hold-"+t.ID, 5*time.Minute, xlog.LevelInfo,
-				"[engine] task %s planner 规划轮抑制：存在未完成的免规划自定义 intent（%s，等待人工或真实完成）", t.ID, src)
+				"[engine] task %s planning round suppressed: unfinished custom intent exempt from planning (%s; waiting for a human decision or actual completion)", t.ID, src)
 			return
 		}
 		// 【二开·P-INTENT·S3】起 —— planner 心跳抑制守卫（01 册 S3）
@@ -1062,7 +1062,7 @@ func (e *Engine) plannerLoopWithInterval(ctx context.Context, t *Task, interval 
 		// NotifyDone 边沿唤醒，本守卫自动失效（待审清零）恢复正常规划。
 		if proposed, err := t.Store.HasProposedIntent(); err == nil && proposed {
 			// 【二开·P-LOG·S3】INFO 记抑制（排障：planner 为什么没跑）
-			log.Printf("[engine] task %s planner 规划轮抑制：有待审意图（决策权在审核面板）", t.ID)
+			log.Printf("[engine] task %s planning round suppressed: intents await review (decisions belong in the review panel)", t.ID)
 			// 【二开·审核流 PR5/§4.2.4】不再盲丢：revision_requested/hint 保留在队列，
 			// 审核解除后随下一轮送达；done/finding 等易再生触发仍丢弃防无界累积。
 			// 注意：NotifyHint 产生的事件 Kind 是 "hint"（manager.go NotifyHint），不是 "planner_hint"。
@@ -1079,7 +1079,7 @@ func (e *Engine) plannerLoopWithInterval(ctx context.Context, t *Task, interval 
 		// HasActiveIntent 漏算，若不豁免 → 任务被误判"跑干"落 done，待审意图烂在库里。
 		if proposed, err := t.Store.HasProposedIntent(); err == nil && proposed {
 			// 【二开·P-LOG·S4b】INFO 记 goalless 豁免（排障：任务为什么一直 running 不收官）
-			log.Printf("[engine] task %s goalless 收尾豁免：有待审意图，保持 running 等待人工审核", t.ID)
+			log.Printf("[engine] task %s exempt from goalless finalization: intents await review; retaining running state for human review", t.ID)
 			return // 保持 running，静默等待人工审核（同样不触发 LLM）
 		}
 		// 【二开·P-INTENT·S4】止
@@ -1093,10 +1093,10 @@ func (e *Engine) plannerLoopWithInterval(ctx context.Context, t *Task, interval 
 				// frontier 抽干且无在跑意图 → 收尾。用 Guarded 版做 CAS，避免踩到并发的
 				// pause/delete/超时收尾的状态转换。
 				if won, err := e.m.SetTaskStatusGuarded(t.ID, "done"); err != nil {
-					log.Printf("[goalless] task %s 收尾落 done 失败: %v", t.ID, err)
+					log.Printf("[goalless] task %s failed to persist done state: %v", t.ID, err)
 				} else if won {
 					e.emitActivity(t, db.Activity{Worker: "system", Kind: "text",
-						Summary: "目标已全部达成，直投意图已执行完毕，任务结束"})
+						Summary: "All goals achieved and directly submitted intents completed; task finished"})
 				}
 			}
 			return // goalless 分支永不进入 planner.Plan
@@ -1112,11 +1112,11 @@ func (e *Engine) plannerLoopWithInterval(ctx context.Context, t *Task, interval 
 		if ectx.Err() != nil || e.IsDeleting(t.ID) {
 			return
 		}
-		log.Printf("[planner] task %s 规划中…(%s 触发)", t.ID, src)
+		log.Printf("[planner] task %s planning… (trigger: %s)", t.ID, src)
 		// round marker: each Plan() is one planner round; emit a boundary so the
 		// UI can separate rounds in the transcript (kind='round').
 		e.emitActivity(t, db.Activity{Worker: "planner", Kind: "round",
-			Summary: fmt.Sprintf("第 %d 轮规划", e.nextPlannerRound(t.ID))})
+			Summary: fmt.Sprintf("Planning round %d", e.nextPlannerRound(t.ID))})
 		// what fired this round (worker done / finding; may be several — debounce
 		// coalesces a burst; empty for time/heartbeat wakes).
 		triggers := t.drainTriggers()
@@ -1126,17 +1126,17 @@ func (e *Engine) plannerLoopWithInterval(ctx context.Context, t *Task, interval 
 		e.EndLLMCall(t.ID)
 		switch {
 		case err != nil && ectx.Err() == nil:
-			log.Printf("[planner] task %s 规划出错: %v", t.ID, err)
+			log.Printf("[planner] task %s planning error: %v", t.ID, err)
 		case met:
-			log.Printf("[planner] task %s 判定目标达成: %s", t.ID, reason)
+			log.Printf("[planner] task %s determined goal achieved: %s", t.ID, reason)
 			if rj, rerr := t.Store.HasRejectedIntent(); rerr == nil && rj {
 				// 【二开·审核流 PR5/§4.2.4】goal_met 守卫：存在被驳回待修订意图时不许落 done——
 				// 修订还没做完，任务保持 running 等 planner 处理 revision_requested。
-				log.Printf("[planner] task %s 目标达成判定被拦截：仍有被驳回待修订意图", t.ID)
+				log.Printf("[planner] task %s goal-achieved decision blocked: rejected intents still await revision", t.ID)
 			} else {
 				// 所有目标达成 → 持久化任务状态为 done（前端 DTO 会优先展示该终态）。
 				if err := e.m.SetTaskStatus(t.ID, "done"); err != nil {
-					log.Printf("[planner] task %s 标记完成落库失败: %v", t.ID, err)
+					log.Printf("[planner] task %s failed to persist completion: %v", t.ID, err)
 				}
 				// 任务已判完成 → 立刻取消在跑的 worker：它们手头的意图跑出来也没意义了。
 				// 下一轮 worker 循环撞终态门就不再领新意图;被取消的这批走下方"任务已完成"分支
@@ -1144,7 +1144,7 @@ func (e *Engine) plannerLoopWithInterval(ctx context.Context, t *Task, interval 
 				e.cancelExec(t.ID, agent.AbortGoalMet)
 			}
 		default:
-			log.Printf("[planner] task %s 规划完成", t.ID)
+			log.Printf("[planner] task %s planning complete", t.ID)
 		}
 		e.touch(t.ID)
 	}
@@ -1161,7 +1161,7 @@ func (e *Engine) plannerLoopWithInterval(ctx context.Context, t *Task, interval 
 			if active, err := t.Store.HasActiveIntent(); err == nil && !active {
 				if proposed, err := t.Store.HasProposedIntent(); err == nil && proposed {
 					// 【二开·P-LOG·S3】INFO 记心跳抑制（排障：planner 心跳为什么停了）
-					log.Printf("[engine] task %s planner 心跳抑制：仅待审意图无活跃意图", t.ID)
+					log.Printf("[engine] task %s planner heartbeat suppressed: only pending-review intents, no active intents", t.ID)
 					resetPlannerTimer(heartbeat, interval)
 					continue
 				}
@@ -1169,7 +1169,7 @@ func (e *Engine) plannerLoopWithInterval(ctx context.Context, t *Task, interval 
 			// 【二开·P-REVIEW·S3】止
 			// custom proposed 等待执行器领取时，planner 心跳同样无意义——执行完成后会 edge 唤醒。
 			if assigned, err := t.Store.HasAssignedIntent(); err == nil && assigned {
-				log.Printf("[engine] task %s planner 心跳抑制：有自定义执行器待领取意图", t.ID)
+				log.Printf("[engine] task %s planner heartbeat suppressed: custom-executor intents await claiming", t.ID)
 				resetPlannerTimer(heartbeat, interval)
 				continue
 			}
@@ -1228,20 +1228,20 @@ func (e *Engine) workerLoop(ctx context.Context, t *Task, name string) {
 // 返回错误时调用方负责回退默认 worker（pickExecutor 的 R6 分支）。
 func (e *Engine) resolveExecutor(key string) (*db.Agent, error) {
 	if key == "" {
-		return nil, fmt.Errorf("executor_key 为空")
+		return nil, fmt.Errorf("executor_key is empty")
 	}
 	a, err := e.m.pg.GetAgentByExecutorKey(key) // D10 新增
 	if err != nil {
-		return nil, fmt.Errorf("查询执行器失败: %w", err)
+		return nil, fmt.Errorf("Failed to query executor: %w", err)
 	}
 	if a == nil {
-		return nil, fmt.Errorf("执行器标识 %q 未注册", key)
+		return nil, fmt.Errorf("Executor key %q is not registered", key)
 	}
 	if !a.Enabled {
-		return nil, fmt.Errorf("执行器 %q 所属 agent 已禁用", key)
+		return nil, fmt.Errorf("The agent for executor %q is disabled", key)
 	}
 	if a.Builtin {
-		return nil, fmt.Errorf("内置 agent 不能作为自定义执行器（executor_key 只面向自定义 agent）")
+		return nil, fmt.Errorf("Built-in agents cannot be custom executors (executor_key is for custom agents only)")
 	}
 	return a, nil
 }
@@ -1328,15 +1328,15 @@ func terminalStateForIntent(customRouted bool, reason harness.TerminalReason, ru
 // 该包装确保 nil Provider/panic 不会跳过 EndLLMCall、detachWork、completeWork 和 inflight 清理。
 func runCustomExecutorSafely(ctx context.Context, cfg agent.CustomExecutorConfig) (reason harness.TerminalReason, wrote agent.WriteCounts, err error, boundaryError bool) {
 	if cfg.Agent == nil {
-		return reason, wrote, fmt.Errorf("自定义执行器 agent 为空"), true
+		return reason, wrote, fmt.Errorf("Custom executor agent is empty"), true
 	}
 	if cfg.Provider == nil {
-		return reason, wrote, fmt.Errorf("没有可用的 LLM 配置"), true
+		return reason, wrote, fmt.Errorf("No usable LLM configuration"), true
 	}
 	defer func() {
 		if r := recover(); r != nil {
-			log.Printf("[executor] 自定义执行器 panic: %v\n%s", r, debug.Stack())
-			err = fmt.Errorf("自定义执行器 panic: %v", r)
+			log.Printf("[executor] custom executor panic: %v\n%s", r, debug.Stack())
+			err = fmt.Errorf("Custom executor panic: %v", r)
 			boundaryError = true
 		}
 	}()
@@ -1369,7 +1369,7 @@ func (e *Engine) runWorkerStep(ctx context.Context, t *Task, name string, worker
 	if intent == nil {
 		return false
 	}
-	log.Printf("[worker %s] task %s 领取意图 #%d (执行者 %s)", executionName, t.ID, intent.ID, executionName)
+	log.Printf("[worker %s] task %s claimed intent #%d (executor %s)", executionName, t.ID, intent.ID, executionName)
 	return e.runIntent(ctx, t, executionName, worker, intent, "", "", customPreclaimed)
 }
 
@@ -1390,7 +1390,7 @@ func (e *Engine) runIntent(ctx context.Context, t *Task, name string, worker *ag
 	if ectx.Err() != nil || e.IsDeleting(t.ID) {
 		targetState := queuedIntentState(intent)
 		if err := transitionIntentState(t.Store, intent.ID, targetState); err != nil {
-			log.Printf("[worker %s] task %s 意图 #%d 领取后回退失败: %v", name, t.ID, intent.ID, err)
+			log.Printf("[worker %s] task %s failed to roll back intent #%d after claiming: %v", name, t.ID, intent.ID, err)
 		}
 		return true
 	}
@@ -1433,19 +1433,19 @@ func (e *Engine) runIntent(ctx context.Context, t *Task, name string, worker *ag
 			if intent.State == "proposed" {
 				// custom proposed 的 executor 不存在/禁用/内置时直接 blocked，不回退默认 Worker。
 				e.emitActivity(t, db.Activity{Worker: "system", Kind: "text",
-					Summary: fmt.Sprintf("意图 #%d 指定执行器 %q 不可用（%v），无法执行", intent.ID, executorKey, resolveErr)})
-				log.Printf("[engine] task %s 意图 #%d custom proposed executor %q 解析失败（%v），标记 blocked", t.ID, intent.ID, executorKey, resolveErr)
+					Summary: fmt.Sprintf("Intent #%d cannot run: specified executor %q is unavailable (%v)", intent.ID, executorKey, resolveErr)})
+				log.Printf("[engine] task %s intent #%d custom proposed executor %q could not be resolved (%v); marking blocked", t.ID, intent.ID, executorKey, resolveErr)
 				if stateErr := transitionIntentState(t.Store, intent.ID, "blocked"); stateErr != nil {
-					log.Printf("[worker %s] task %s 意图 #%d blocked 落库失败: %v", name, t.ID, intent.ID, stateErr)
+					log.Printf("[worker %s] task %s failed to persist blocked state for intent #%d: %v", name, t.ID, intent.ID, stateErr)
 				}
 				return true
 			}
 			// 存量 open custom 保留 R6 默认 Worker 回退。
 			e.emitActivity(t, db.Activity{Worker: "system", Kind: "text",
-				Summary: fmt.Sprintf("意图 #%d 指定执行器 %q 不可用（%v），已回退默认 worker", intent.ID, executorKey, resolveErr)})
-			log.Printf("[P-INTENT·S1] WARN task %s 意图 #%d executor %q 解析失败（%v），回退默认 worker", t.ID, intent.ID, executorKey, resolveErr)
+				Summary: fmt.Sprintf("Intent #%d specified executor %q is unavailable (%v); falling back to default worker", intent.ID, executorKey, resolveErr)})
+			log.Printf("[P-INTENT·S1] WARN task %s intent #%d executor %q could not be resolved (%v); falling back to default worker", t.ID, intent.ID, executorKey, resolveErr)
 		} else {
-			log.Printf("[engine] executor 路由命中：task %s 意图 #%d executor=%s（pre_agent 编排路由）", t.ID, intent.ID, executorKey)
+			log.Printf("[engine] executor route matched: task %s intent #%d executor=%s (pre_agent orchestration route)", t.ID, intent.ID, executorKey)
 			var prov llm.Provider
 			if e.providerFn != nil {
 				prov, _, _ = e.providerFn(llmProfileOrZero(ea.LLMProfileID))
@@ -1464,10 +1464,10 @@ func (e *Engine) runIntent(ctx context.Context, t *Task, name string, worker *ag
 	if intent.State == "proposed" && executorKey == "" && !hasChatMessage {
 		// exec:<unassigned> 对应的 proposed 空 executor：直接写错误并 blocked。
 		e.emitActivity(t, db.Activity{Worker: "system", Kind: "text",
-			Summary: fmt.Sprintf("意图 #%d 未配置 executor，无法执行", intent.ID)})
-		log.Printf("[engine] task %s 意图 #%d proposed 空 executor，标记 blocked", t.ID, intent.ID)
+			Summary: fmt.Sprintf("Intent #%d has no configured executor and cannot run", intent.ID)})
+		log.Printf("[engine] task %s proposed intent #%d has empty executor; marking blocked", t.ID, intent.ID)
 		if stateErr := transitionIntentState(t.Store, intent.ID, "blocked"); stateErr != nil {
-			log.Printf("[worker %s] task %s 意图 #%d blocked 落库失败: %v", name, t.ID, intent.ID, stateErr)
+			log.Printf("[worker %s] task %s failed to persist blocked state for intent #%d: %v", name, t.ID, intent.ID, stateErr)
 		}
 		return true
 	}
@@ -1475,10 +1475,10 @@ func (e *Engine) runIntent(ctx context.Context, t *Task, name string, worker *ag
 	if !routed && worker == nil {
 		// 默认 worker 尚未就绪，禁止 nil 解引用；覆盖 open custom 的 R6 回退和 hasChatMessage 分支。
 		e.emitActivity(t, db.Activity{Worker: "system", Kind: "text",
-			Summary: fmt.Sprintf("意图 #%d 默认 worker 尚未就绪，无法执行", intent.ID)})
-		log.Printf("[engine] task %s 意图 #%d 默认 worker 尚未就绪，标记 blocked", t.ID, intent.ID)
+			Summary: fmt.Sprintf("Intent #%d cannot run: default worker is not ready", intent.ID)})
+		log.Printf("[engine] task %s intent #%d default worker is not ready; marking blocked", t.ID, intent.ID)
 		if stateErr := transitionIntentState(t.Store, intent.ID, "blocked"); stateErr != nil {
-			log.Printf("[worker %s] task %s 意图 #%d blocked 落库失败: %v", name, t.ID, intent.ID, stateErr)
+			log.Printf("[worker %s] task %s failed to persist blocked state for intent #%d: %v", name, t.ID, intent.ID, stateErr)
 		}
 		return true
 	}
@@ -1502,7 +1502,7 @@ func (e *Engine) runIntent(ctx context.Context, t *Task, name string, worker *ag
 	for attempt := 1; attempt <= maxRetries &&
 		retryableWorkerModelError(reason, err) && !boundaryError &&
 		workCtx.Err() == nil && ectx.Err() == nil && !e.IsPaused(t.ID) && !e.isSettling(t.ID); attempt++ {
-		log.Printf("[worker %s] task %s 意图 #%d model_error 收场，%v 后重试 (%d/%d)",
+		log.Printf("[worker %s] task %s intent #%d ended with model_error; retrying after %v (%d/%d)",
 			name, t.ID, intent.ID, retryBackoff, attempt, maxRetries)
 		if sleepCtx(workCtx, retryBackoff) {
 			break // 退避期间被取消（终止/暂停）→ 交给下方分支处理
@@ -1542,16 +1542,16 @@ func (e *Engine) runIntent(ctx context.Context, t *Task, name string, worker *ag
 	var controlErr error
 	defer func() { completeWork(controlErr) }()
 	if errors.Is(err, agent.ErrNoMatchingIntent) {
-		log.Printf("[executor %s] task %s 无匹配 intent #%d，保持 %s 并退出，不启动默认 Worker", name, t.ID, intent.ID, intent.State)
+		log.Printf("[executor %s] task %s has no matching intent #%d; retaining %s and exiting without starting the default Worker", name, t.ID, intent.ID, intent.State)
 		return false
 	}
 	if action == "pause" {
 		controlErr = transitionIntentState(t.Store, intent.ID, "paused")
 		if controlErr != nil {
-			log.Printf("[worker %s] task %s 意图 #%d 暂停状态落库失败: %v", name, t.ID, intent.ID, controlErr)
+			log.Printf("[worker %s] task %s failed to persist paused state for intent #%d: %v", name, t.ID, intent.ID, controlErr)
 			return true
 		}
-		log.Printf("[worker %s] task %s 意图 #%d 已暂停", name, t.ID, intent.ID)
+		log.Printf("[worker %s] task %s intent #%d paused", name, t.ID, intent.ID)
 		e.touch(t.ID)
 		return true
 	}
@@ -1561,10 +1561,10 @@ func (e *Engine) runIntent(ctx context.Context, t *Task, name string, worker *ag
 		// a later cancel can finish cleanup instead of leaving a phantom running row.
 		controlErr = transitionIntentState(t.Store, intent.ID, "paused")
 		if controlErr != nil {
-			log.Printf("[worker %s] task %s 意图 #%d 取消栅栏落库失败: %v", name, t.ID, intent.ID, controlErr)
+			log.Printf("[worker %s] task %s failed to persist cancellation fence for intent #%d: %v", name, t.ID, intent.ID, controlErr)
 			return true
 		}
-		log.Printf("[worker %s] task %s 意图 #%d 已停止，等待取消清理", name, t.ID, intent.ID)
+		log.Printf("[worker %s] task %s intent #%d stopped; awaiting cancellation cleanup", name, t.ID, intent.ID)
 		e.touch(t.ID)
 		return true
 	}
@@ -1574,7 +1574,7 @@ func (e *Engine) runIntent(ctx context.Context, t *Task, name string, worker *ag
 	if ectx.Err() != nil && taskExecutionPaused(context.Cause(ectx)) {
 		targetState := queuedIntentState(intent)
 		if err := transitionIntentState(t.Store, intent.ID, targetState); err != nil {
-			log.Printf("[worker %s] task %s 意图 #%d 任务暂停回退失败: %v", name, t.ID, intent.ID, err)
+			log.Printf("[worker %s] task %s failed to roll back intent #%d after task pause: %v", name, t.ID, intent.ID, err)
 		}
 		return true
 	}
@@ -1582,9 +1582,9 @@ func (e *Engine) runIntent(ctx context.Context, t *Task, name string, worker *ag
 	// 不要误标 blocked。此时 worker 通常已在 settlement 阶段把结果写回。
 	if ectx.Err() != nil && e.isSettling(t.ID) {
 		if err := transitionIntentState(t.Store, intent.ID, "exhausted"); err != nil {
-			log.Printf("[worker %s] task %s 意图 #%d 超时收尾状态落库失败: %v", name, t.ID, intent.ID, err)
+			log.Printf("[worker %s] task %s failed to persist timeout-finalization state for intent #%d: %v", name, t.ID, intent.ID, err)
 		}
-		log.Printf("[worker %s] task %s 意图 #%d 因任务超时收尾结束(exhausted)，写回 %s", name, t.ID, intent.ID, wrote)
+		log.Printf("[worker %s] task %s intent #%d ended during task-timeout finalization (exhausted); wrote back %s", name, t.ID, intent.ID, wrote)
 		e.touch(t.ID)
 		return true
 	}
@@ -1592,18 +1592,18 @@ func (e *Engine) runIntent(ctx context.Context, t *Task, name string, worker *ag
 	// 标 stopped(不是 blocked),别污染已完成任务的意图状态。
 	if ectx.Err() != nil && isTerminalStatus(e.m.TaskStatus(t.ID)) {
 		if err := transitionIntentState(t.Store, intent.ID, "stopped"); err != nil {
-			log.Printf("[worker %s] task %s 意图 #%d 终态停止落库失败: %v", name, t.ID, intent.ID, err)
+			log.Printf("[worker %s] task %s failed to persist terminal stopped state for intent #%d: %v", name, t.ID, intent.ID, err)
 		}
-		log.Printf("[worker %s] task %s 意图 #%d 因任务已完成而取消(stopped)", name, t.ID, intent.ID)
+		log.Printf("[worker %s] task %s intent #%d cancelled because task completed (stopped)", name, t.ID, intent.ID)
 		e.touch(t.ID)
 		return true
 	}
 	// killed by the planner: mark stopped (don't write back results, don't auto-reclaim).
 	if killed {
 		if err := transitionIntentState(t.Store, intent.ID, "stopped"); err != nil {
-			log.Printf("[worker %s] task %s 意图 #%d planner 停止落库失败: %v", name, t.ID, intent.ID, err)
+			log.Printf("[worker %s] task %s failed to persist planner stop for intent #%d: %v", name, t.ID, intent.ID, err)
 		}
-		log.Printf("[worker %s] task %s 意图 #%d 被终止(stopped)", name, t.ID, intent.ID)
+		log.Printf("[worker %s] task %s intent #%d terminated (stopped)", name, t.ID, intent.ID)
 		e.touch(t.ID)
 		if !e.isUncontrolledByPlanner(intent) {
 			t.Notify()
@@ -1618,21 +1618,21 @@ func (e *Engine) runIntent(ctx context.Context, t *Task, name string, worker *ag
 	state := terminalStateForIntent(customRouted, reason, err)
 	switch reason {
 	case harness.ReasonMaxTurns:
-		log.Printf("[worker %s] intent %d 撞步数上限(exhausted)，本次写回 %s", name, intent.ID, wrote)
+		log.Printf("[worker %s] intent %d reached step limit (exhausted); wrote back %s", name, intent.ID, wrote)
 	case harness.ReasonTimeout:
-		log.Printf("[worker %s] intent %d 运行超时(exhausted)，收尾后写回 %s", name, intent.ID, wrote)
+		log.Printf("[worker %s] intent %d timed out (exhausted); wrote back %s after finalization", name, intent.ID, wrote)
 	}
 	if customRouted && err == nil && state == "blocked" {
-		log.Printf("[worker %s] intent %d 终止原因 %q 不是 completed，按未完成 blocked 处理", name, intent.ID, reason)
+		log.Printf("[worker %s] intent %d terminal reason %q is not completed; treating as incomplete/blocked", name, intent.ID, reason)
 	}
 	if state == "blocked" && isTaskLLMChainExhausted(err) {
 		_ = t.Store.SetIntentBlockedReason(intent.ID, db.IntentBlockedLLMQuota)
 	} else {
 		if stateErr := transitionIntentState(t.Store, intent.ID, state); stateErr != nil {
-			log.Printf("[worker %s] task %s 意图 #%d 终态 %s 落库失败: %v", name, t.ID, intent.ID, state, stateErr)
+			log.Printf("[worker %s] task %s failed to persist intent #%d terminal state %s: %v", name, t.ID, intent.ID, state, stateErr)
 		}
 	}
-	log.Printf("[worker %s] task %s 意图 #%d 结束: %s (写回 %s)", name, t.ID, intent.ID, state, wrote)
+	log.Printf("[worker %s] task %s intent #%d ended: %s (wrote back %s)", name, t.ID, intent.ID, state, wrote)
 	e.touch(t.ID)
 	// 不受 Planner 控制的 intent 只有真实 done 才唤醒 Planner；其他 intent 保留原有失败重规划。
 	if state == "done" || !e.isUncontrolledByPlanner(intent) {
@@ -1665,7 +1665,7 @@ func (e *Engine) runDetachedIntent(ctx context.Context, t *Task, intentID int64,
 	}()
 	_, worker := e.snapshotFor(t)
 	if worker == nil {
-		return fmt.Errorf("worker 尚未就绪")
+		return fmt.Errorf("Worker is not ready")
 	}
 	node, err := t.Store.GetNode(intentID)
 	if err != nil {
@@ -1679,7 +1679,7 @@ func (e *Engine) runDetachedIntent(ctx context.Context, t *Task, intentID int64,
 		return err
 	}
 	if !changed {
-		return fmt.Errorf("%w: 意图不再是 paused 状态", db.ErrIntentStateConflict)
+		return fmt.Errorf("%w: intent is no longer paused", db.ErrIntentStateConflict)
 	}
 	node.State, node.Owner = "running", "chat"
 	// Record the human turn as a visible activity BEFORE the run starts, so it is

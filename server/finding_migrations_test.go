@@ -251,7 +251,7 @@ func TestPlannerFindingDispatchMigration(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	createdDisp := ensureCustomAgent(t, pg, "vuln_dispatcher", "漏洞派发", vulnDispatcherDescriptionV1)
+	createdDisp := ensureCustomAgent(t, pg, "vuln_dispatcher", "Finding Dispatcher", vulnDispatcherDescriptionV1)
 	t.Cleanup(func() { removeCustomAgent(t, pg, "vuln_dispatcher", createdDisp) })
 	disp, err := pg.GetAgentByKey("vuln_dispatcher")
 	if err != nil {
@@ -393,7 +393,7 @@ func TestPlannerFindingDispatchWithoutTraceCleaner(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	createdDisp := ensureCustomAgent(t, pg, "vuln_dispatcher", "漏洞派发", "")
+	createdDisp := ensureCustomAgent(t, pg, "vuln_dispatcher", "Finding Dispatcher", "")
 	t.Cleanup(func() { removeCustomAgent(t, pg, "vuln_dispatcher", createdDisp) })
 
 	t.Cleanup(replaceTriggers(t, pg, "vuln_dispatcher",
@@ -429,7 +429,7 @@ func TestVulnDispatcherFindingPromptMigration(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	created := ensureCustomAgent(t, pg, "vuln_dispatcher", "漏洞派发", "")
+	created := ensureCustomAgent(t, pg, "vuln_dispatcher", "Finding Dispatcher", "")
 	t.Cleanup(func() { removeCustomAgent(t, pg, "vuln_dispatcher", created) })
 	disp, err := pg.GetAgentByKey("vuln_dispatcher")
 	if err != nil {
@@ -500,7 +500,7 @@ func TestUpgradeVulnDispatcherIndependentGraph(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	created := ensureCustomAgent(t, pg, "vuln_dispatcher", "漏洞派发", "")
+	created := ensureCustomAgent(t, pg, "vuln_dispatcher", "Finding Dispatcher", "")
 	t.Cleanup(func() { removeCustomAgent(t, pg, "vuln_dispatcher", created) })
 	disp, err := pg.GetAgentByKey("vuln_dispatcher")
 	if err != nil {

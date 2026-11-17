@@ -36,17 +36,17 @@ func (s *Server) updateTaskMetadata(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if request.Name == nil && request.Pinned == nil && request.ReviewAuto == nil && request.ReviewEnabled == nil {
-		writeErr(w, http.StatusBadRequest, "至少需要提供 name、pinned、review_auto 或 review_enabled")
+		writeErr(w, http.StatusBadRequest, "Provide at least name, pinned, review_auto, or review_enabled")
 		return
 	}
 	if request.Name != nil {
 		name := strings.TrimSpace(*request.Name)
 		if name == "" {
-			writeErr(w, http.StatusBadRequest, "任务名称不能为空")
+			writeErr(w, http.StatusBadRequest, "Task name is required")
 			return
 		}
 		if utf8.RuneCountInString(name) > maxTaskNameRunes {
-			writeErr(w, http.StatusBadRequest, fmt.Sprintf("任务名称最多 %d 个字符", maxTaskNameRunes))
+			writeErr(w, http.StatusBadRequest, fmt.Sprintf("Task name must not exceed %d characters", maxTaskNameRunes))
 			return
 		}
 		request.Name = &name
@@ -60,7 +60,7 @@ func (s *Server) updateTaskMetadata(w http.ResponseWriter, r *http.Request) {
 			rej, _ := t.Store.RejectedIntents(1000)
 			if len(pend)+len(rej) > 0 {
 				writeErr(w, http.StatusConflict, fmt.Sprintf(
-					"仍有 %d 条待审、%d 条待修订意图：请先批准、修订重送或显式取消（cancel_intent）后再关闭审核",
+					"There are still %d pending-review and %d pending-revision intents. Approve them, revise and resubmit them, or explicitly cancel them (cancel_intent) before disabling review",
 					len(pend), len(rej)))
 				return
 			}

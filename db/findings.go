@@ -94,7 +94,7 @@ func ValidSeverity(s string) bool {
 func normalizeSeverity(severity string) (string, error) {
 	severity = strings.ToLower(strings.TrimSpace(utf8Clean(severity)))
 	if !ValidSeverity(severity) {
-		return "", fmt.Errorf("无效的严重等级 %q（仅支持 critical/high/medium/low）", severity)
+		return "", fmt.Errorf("Invalid severity %q (supported: critical/high/medium/low)", severity)
 	}
 	return severity, nil
 }

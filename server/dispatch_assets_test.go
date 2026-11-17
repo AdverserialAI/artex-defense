@@ -15,9 +15,9 @@ import (
 func TestDispatcherUsesFindingAssetDedupe(t *testing.T) {
 	p := agent.VulnDispatcherDefaultPrompt
 	for _, want := range []string{
-		"check_internal_asset_task", "产生立足点/Finding 的实际资产",
-		"任务 id 等于当前触发任务", "服务端会用规范化资产键和唯一约束",
-		"spawn_task 必须传 finding_id",
+		"check_internal_asset_task", "actual asset producing the foothold/Finding",
+		"task ID equal to the trigger task", "Server normalized asset keys and uniqueness constraints",
+		"spawn_task must include finding_id",
 	} {
 		if !strings.Contains(p, want) {
 			t.Fatalf("Dispatcher 缺少资产去重规则 %q", want)

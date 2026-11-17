@@ -6,6 +6,9 @@
 package server
 
 import (
+	_ "embed"
+	"encoding/json"
+
 	"artex/agent"
 	"artex/db"
 	"artex/traffic"
@@ -75,11 +78,24 @@ var toolDisplayDescriptions = map[string]string{
 	"traffic_blob":                 "Read an oversized request or response body in segments. When traffic_get shows '…[truncated] @blob sha256:<hash>', pass that hash here to retrieve the complete content. Returns at most 8KB per call; use offset to continue reading and the returned total length to track progress. Useful for backup files, source-code disclosures, large JSON exports, and other responses above the inline threshold.",
 }
 
+// Legacy defaults are retained only to recognize saved, unmodified installations.
+//
+//go:embed english_legacy_tools.json
+var legacyToolDescriptionsJSON []byte
+
+var legacyToolDescriptions = func() map[string]string {
+	var descriptions map[string]string
+	if err := json.Unmarshal(legacyToolDescriptionsJSON, &descriptions); err != nil {
+		panic(err)
+	}
+	return descriptions
+}()
+
 var builtinToolDisplayDescriptions = func() map[string]englishDisplayText {
 	translations := make(map[string]englishDisplayText, len(toolDisplayDescriptions))
 	for _, seed := range agent.BuiltinToolSeeds() {
 		if english, ok := toolDisplayDescriptions[seed.Key]; ok {
-			translations[seed.Key] = englishDisplayText{legacy: seed.Desc, english: english}
+			translations[seed.Key] = englishDisplayText{legacy: legacyToolDescriptions[seed.Key], english: english}
 		}
 	}
 	return translations
@@ -89,6 +105,7 @@ func localizeToolWithTranslations(tool *db.Tool, translations map[string]english
 	if tool == nil || !tool.System {
 		return
 	}
+	localizeToolSchema(tool)
 	if translation, ok := translations[tool.Key]; ok && tool.Description == translation.legacy {
 		tool.Description = translation.english
 	}
@@ -108,7 +125,7 @@ func localizeTools(tools []*db.Tool, defaultGroups ...[]actool.CoreTool) {
 		for _, group := range defaultGroups {
 			for _, defaultTool := range group {
 				if english, ok := toolDisplayDescriptions[defaultTool.Name()]; ok {
-					translations[defaultTool.Name()] = englishDisplayText{legacy: defaultTool.Description(), english: english}
+					translations[defaultTool.Name()] = englishDisplayText{legacy: legacyToolDescriptions[defaultTool.Name()], english: english}
 				}
 			}
 		}

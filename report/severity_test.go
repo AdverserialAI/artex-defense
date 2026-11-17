@@ -55,7 +55,7 @@ func TestFindingsMarkdownSortsCanonicalSeverity(t *testing.T) {
 	}
 
 	// Historical uppercase values still count in their canonical summary bucket.
-	for _, want := range []string{"| 严重 | 1 |", "| 高危 | 1 |", "| 中危 | 1 |", "| 低危 | 1 |"} {
+	for _, want := range []string{"| Critical | 1 |", "| High | 1 |", "| Medium | 1 |", "| Low | 1 |"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("summary missing %q:\n%s", want, out)
 		}

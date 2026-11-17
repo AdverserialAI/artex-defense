@@ -21,7 +21,7 @@ func TestFindingTriggerContextIncludesExecutionMode(t *testing.T) {
 			got := findingTriggerContext(db.TaskEvent{
 				TaskID: 7, TaskGoal: tt.goal, VulnClass: "rce", Severity: "high", Summary: "confirmed",
 			})
-			if !strings.Contains(got, "执行模式: "+tt.mode) {
+			if !strings.Contains(got, "Execution mode: "+tt.mode) {
 				t.Fatalf("finding context missing mode %q: %s", tt.mode, got)
 			}
 			if !strings.Contains(got, "[rce/high] confirmed") {

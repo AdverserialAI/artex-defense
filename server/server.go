@@ -235,7 +235,7 @@ func New(ctx context.Context, m *Manager, skillDir string, dataDir string, keyDi
 		agent.PlannerDefaultTemplateBodyFn = func() string {
 			body, err := m.pg.DefaultPlannerTemplateBody()
 			if err != nil {
-				log.Printf("[task] plannerSystem ③默认模板读取失败 ⚠ err=%v（落④内置兜底）", err)
+				log.Printf("[task] plannerSystem default template read failed ⚠ err=%v (using built-in fallback)", err)
 				return ""
 			}
 			return body
@@ -243,7 +243,7 @@ func New(ctx context.Context, m *Manager, skillDir string, dataDir string, keyDi
 		agent.WorkerDefaultTemplateBodyFn = func() string {
 			body, err := m.pg.DefaultWorkerTemplateBody()
 			if err != nil {
-				log.Printf("[task] workerSystem 默认模板读取失败: %v（使用内置兜底）", err)
+				log.Printf("[task] workerSystem default template read failed: %v (using built-in fallback)", err)
 				return ""
 			}
 			return body
@@ -291,6 +291,9 @@ func New(ctx context.Context, m *Manager, skillDir string, dataDir string, keyDi
 		s.backfillTaskDispatchTargets() // 旧内网任务按 description 中 finding #N / finding_id=N 回填资产去重目标
 		if err := s.seedFindingRetester(); err != nil {
 			log.Printf("[retester] seed: %v", err)
+		}
+		if err := s.migrateEnglishDefaults(); err != nil {
+			log.Printf("[localization] English default migration failed: %v", err)
 		}
 		go s.evidenceStore().RunGC(s.ctx)
 		s.seedPythonInterpreter()     // 自定义脚本工具:开机检测 python 解释器入库(仅空时)
@@ -351,7 +354,7 @@ func (s *Server) restoreTaskRuntimes() {
 		// clear stale 'running' intents from a prior crash/restart (no live worker
 		// owns them) so they re-claim instead of spinning forever in the UI.
 		if n, _ := t.Store.ResetRunningIntents(); n > 0 {
-			log.Printf("[engine] task %s 重置 %d 个残留 running 意图到待执行队列", t.ID, n)
+			log.Printf("[engine] task %s reset %d leftover running intents to the execution queue", t.ID, n)
 		}
 		if lifecycle.Paused {
 			s.engine.Pause(t.ID, agent.AbortPausedOnReload)
@@ -735,13 +738,13 @@ func (s *Server) resolveChatAgent(c *db.Conversation) *agent.ChatAgent {
 func (s *Server) chatUnavailableReason() string {
 	if s.m.pg != nil {
 		if profiles, err := s.m.pg.ListProfiles(); err == nil && len(profiles) == 0 {
-			return "尚未配置 LLM：请到 系统 → LLM 配置 添加一个配置"
+			return "No LLM configured. Add a configuration in System → LLM"
 		}
 		if active, err := s.m.pg.ActiveProfile(); err == nil && active == nil {
-			return "没有已激活的 LLM 配置：请到 系统 → LLM 配置 激活一个，或在本对话为该会话指定一个配置"
+			return "No active LLM configuration. Activate one in System → LLM or select a profile for this conversation"
 		}
 	}
-	return "LLM 未就绪，无法对话：请检查 系统 → LLM 配置是否有可用且已激活的配置"
+	return "LLM is not ready; conversation unavailable. Check for a usable active configuration in System → LLM"
 }
 
 // providerForProfile returns a cached provider+cfg for a profile id, so every agent
@@ -1337,7 +1340,7 @@ func (s *Server) setActive(w http.ResponseWriter, r *http.Request) {
 	queued := t.lifecycleSnapshot().Queued
 	if !queued {
 		if !s.engine.beginTaskOperation(t.ID) {
-			writeErr(w, 409, "任务正在删除或归档")
+			writeErr(w, 409, "Task is being deleted or archived")
 			return
 		}
 		defer s.engine.decInflight(t.ID)
@@ -1388,7 +1391,7 @@ func (s *Server) controlIntent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !s.engine.beginTaskOperation(t.ID) {
-		writeErr(w, 409, "任务正在删除，无法控制意图")
+		writeErr(w, 409, "Task is being deleted; intents cannot be controlled")
 		return
 	}
 	defer s.engine.decInflight(t.ID)
@@ -1445,7 +1448,7 @@ func (s *Server) rerunIntent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !s.engine.beginTaskOperation(t.ID) {
-		writeErr(w, 409, "任务正在删除，无法重跑意图")
+		writeErr(w, 409, "Task is being deleted; intents cannot be rerun")
 		return
 	}
 	defer s.engine.decInflight(t.ID)
@@ -1460,7 +1463,7 @@ func (s *Server) rerunIntent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !reopened {
-		writeErr(w, 409, "该意图不是可重跑状态(仅 blocked/exhausted/stopped 可重跑)")
+		writeErr(w, 409, "Intent cannot be rerun in this state (only blocked/exhausted/stopped intents can be rerun)")
 		return
 	}
 	queued, err := s.admitTask(t, "resume")
@@ -1471,7 +1474,7 @@ func (s *Server) rerunIntent(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 500, err.Error())
 		return
 	}
-	log.Printf("[task] #%s 意图 #%d 已重开(重跑)", t.ID, iid)
+	log.Printf("[task] #%s reopened intent #%d (rerun)", t.ID, iid)
 	writeJSON(w, 200, map[string]any{"id": t.ID, "reopened": iid, "queued": queued})
 }
 
@@ -1484,7 +1487,7 @@ func (s *Server) rerunRecoverable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !s.engine.beginTaskOperation(t.ID) {
-		writeErr(w, 409, "任务正在删除，无法重跑意图")
+		writeErr(w, 409, "Task is being deleted; intents cannot be rerun")
 		return
 	}
 	defer s.engine.decInflight(t.ID)
@@ -1521,7 +1524,7 @@ func (s *Server) rerunRecoverable(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, 500, err.Error())
 			return
 		}
-		log.Printf("[task] #%s 批量重开 %d 条 blocked/exhausted/stopped 意图", t.ID, n)
+		log.Printf("[task] #%s reopened %d blocked/exhausted/stopped intents in batch", t.ID, n)
 	}
 	writeJSON(w, 200, map[string]any{"id": t.ID, "reopened": n, "queued": queued})
 }
@@ -1657,7 +1660,7 @@ func (s *Server) testLLM(w http.ResponseWriter, r *http.Request) {
 		s.cfgMu.Unlock()
 	}
 	if cfg.APIKey == "" {
-		writeJSON(w, 200, map[string]any{"ok": false, "error": "未提供 API Key"})
+		writeJSON(w, 200, map[string]any{"ok": false, "error": "API key is required"})
 		return
 	}
 	// 重试参数【不】带进连接测试:测试有 30s 硬超时,把配置的重试次数/长间隔叠上去
@@ -1728,7 +1731,7 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if strings.TrimSpace(req.Description) == "" {
-		req.Description = "未命名任务"
+		req.Description = "Untitled task"
 	}
 	if len(req.LLMProfileIDs) == 0 && req.LLMProfileID != nil {
 		req.LLMProfileIDs = []int64{*req.LLMProfileID}
@@ -1750,7 +1753,7 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 	}
 	companyIDs, err := db.NormalizeTaskCompanyIDs(req.CompanyIDs)
 	if err != nil {
-		writeErr(w, 400, fmt.Sprintf("关联企业无效：最多选择 %d 个有效企业", db.MaxTaskCompanyCount))
+		writeErr(w, 400, fmt.Sprintf("Invalid linked companies: select at most %d valid companies", db.MaxTaskCompanyCount))
 		return
 	}
 	req.CompanyIDs = companyIDs
@@ -1767,7 +1770,7 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 			if strings.TrimSpace(req.AssetMode) == "" {
 				req.AssetMode = cat.AssetMode
 			}
-			if req.Description == "未命名任务" && strings.TrimSpace(cat.DefaultDescription) != "" {
+			if req.Description == "Untitled task" && strings.TrimSpace(cat.DefaultDescription) != "" {
 				req.Description = cat.DefaultDescription // 场景预设描述（人写了描述则不动）
 			}
 			if req.ReviewEnabled == nil && cat.DefaultReviewEnabled {
@@ -1788,22 +1791,22 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 		assetMode = "pentest"
 	}
 	if len(assetMode) > 64 {
-		writeErr(w, 400, "asset_mode 最多 64 字符")
+		writeErr(w, 400, "asset_mode must not exceed 64 characters")
 		return
 	}
 	interceptRules, err := buildTaskInterceptRules(req.InterceptRules)
 	if err != nil {
-		writeErr(w, 400, "任务级拦截规则无效："+err.Error())
+		writeErr(w, 400, "Invalid task-level intercept rules: "+err.Error())
 		return
 	}
 	// 【二开·P-INTENT·S7】起 —— 四新字段校验（00 册 S7）
 	// 【二开·P-LOG·S13】DEBUG 记二开字段入参（排障：建任务 400 是哪儿拦的）。
-	xlog.Debugf("[task] createTask 二开字段：pre_agent=%q planner_prompt=%dB planner_template_id=%d worker_count=%d review_enabled=%v", req.PreAgent, len(strings.TrimSpace(req.PlannerPrompt)), req.PlannerTemplateID, req.WorkerCount, reviewEnabled)
+	xlog.Debugf("[task] createTask extension fields: pre_agent=%q planner_prompt=%dB planner_template_id=%d worker_count=%d review_enabled=%v", req.PreAgent, len(strings.TrimSpace(req.PlannerPrompt)), req.PlannerTemplateID, req.WorkerCount, reviewEnabled)
 	if req.PreAgent != "" {
 		if err := validatePreAgent(s.m.PG(), req.PreAgent); err != nil {
 			// 【二开·P-LOG·S7】pre_agent 校验不予通过（WARN 级；排障：建任务 400 是哪儿拦的）
-			log.Printf("[task] createTask 不予通过 ⚠ pre_agent=%q 无效（须为已启用自定义 agent 声明的 executor_key）", req.PreAgent)
-			writeErr(w, 400, fmt.Sprintf("前置执行器 %q 不可用（须为已启用自定义 agent 的 executor_key）", req.PreAgent))
+			log.Printf("[task] createTask rejected ⚠ invalid pre_agent=%q (must be an executor_key declared by an enabled custom agent)", req.PreAgent)
+			writeErr(w, 400, fmt.Sprintf("Pre-executor %q is unavailable (must be an executor_key of an enabled custom agent)", req.PreAgent))
 			return
 		}
 	}
@@ -1818,11 +1821,11 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 	if plannerPrompt != "" {
 		// 手改覆盖最优先（K22）；与模板正文同标准试渲染校验（含 32KB 上限、目录外变量带行号）。
 		if err := validatePlannerTemplateBody(plannerPrompt); err != nil {
-			writeErr(w, 400, "规划提示词覆盖无效："+err.Error())
+			writeErr(w, 400, "Invalid planner prompt override: "+err.Error())
 			return
 		}
 		// 【二开·P-LOG·S13】快照来源=手改（K22 最高优先）。
-		xlog.Debugf("[task] 提示词快照来源：手改 planner_prompt（%dB）", len(plannerPrompt))
+		xlog.Debugf("[task] prompt snapshot source: manually edited planner_prompt (%dB)", len(plannerPrompt))
 	} else if req.PlannerTemplateID > 0 {
 		tpl, err := pg.GetPlannerTemplate(req.PlannerTemplateID)
 		if err != nil {
@@ -1835,12 +1838,12 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 			for _, it := range tpls {
 				names = append(names, fmt.Sprintf("#%d %s", it.ID, it.Name))
 			}
-			writeErr(w, 400, fmt.Sprintf("规划模板 #%d 不存在；可用模板：%s", req.PlannerTemplateID, strings.Join(names, "、")))
+			writeErr(w, 400, fmt.Sprintf("Planner template #%d does not exist; available templates: %s", req.PlannerTemplateID, strings.Join(names, "、")))
 			return
 		}
 		plannerPrompt = tpl.Body // 快照：此后该模板改/删不影响本任务
 		// 【二开·P-LOG·S13】INFO 记模板快照（排障：这个任务的提示词是哪来的）。
-		log.Printf("[task] 提示词快照：模板 #%d %q（%dB；此后模板改/删不影响本任务）", tpl.ID, tpl.Name, len(tpl.Body))
+		log.Printf("[task] prompt snapshot: template #%d %q (%dB; later template edits/deletion do not affect this task)", tpl.ID, tpl.Name, len(tpl.Body))
 	} else {
 		body, err := defaultPlannerPrompt(pg)
 		if err != nil {
@@ -1849,15 +1852,15 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 		}
 		plannerPrompt = body // 默认模板（首任=内置默认）快照；表为空则 ''，落 A4 运行时链兜底
 		// 【二开·P-LOG·S13】快照来源=默认模板。
-		xlog.Debugf("[task] 提示词快照来源：默认模板（%dB）", len(body))
+		xlog.Debugf("[task] prompt snapshot source: default template (%dB)", len(body))
 	}
 	workerPrompt := strings.TrimSpace(req.WorkerPrompt)
 	if workerPrompt != "" {
 		if err := validateWorkerTemplateBody(workerPrompt); err != nil {
-			writeErr(w, 400, "Worker 提示词覆盖无效："+err.Error())
+			writeErr(w, 400, "Invalid Worker prompt override: "+err.Error())
 			return
 		}
-		xlog.Debugf("[task] Worker 提示词快照来源：手改 worker_prompt（%dB）", len(workerPrompt))
+		xlog.Debugf("[task] Worker prompt snapshot source: manually edited worker_prompt (%dB)", len(workerPrompt))
 	} else if req.WorkerTemplateID > 0 {
 		tpl, err := pg.GetWorkerTemplate(req.WorkerTemplateID)
 		if err != nil {
@@ -1865,11 +1868,11 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if tpl == nil {
-			writeErr(w, 400, fmt.Sprintf("Worker 模板 #%d 不存在", req.WorkerTemplateID))
+			writeErr(w, 400, fmt.Sprintf("Worker template #%d does not exist", req.WorkerTemplateID))
 			return
 		}
 		workerPrompt = tpl.Body
-		log.Printf("[task] Worker 提示词快照：模板 #%d %q（%dB；此后模板改/删不影响本任务）", tpl.ID, tpl.Name, len(tpl.Body))
+		log.Printf("[task] Worker prompt snapshot: template #%d %q (%dB; later template edits/deletion do not affect this task)", tpl.ID, tpl.Name, len(tpl.Body))
 	} else {
 		body, err := defaultWorkerPrompt(pg)
 		if err != nil {
@@ -1877,10 +1880,10 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		workerPrompt = body
-		xlog.Debugf("[task] Worker 提示词快照来源：默认模板（%dB）", len(body))
+		xlog.Debugf("[task] Worker prompt snapshot source: default template (%dB)", len(body))
 	}
 	if err := validateWorkerCount(req.WorkerCount); err != nil {
-		writeErr(w, 400, "worker_count 取值 0~16（0=跟随全局）")
+		writeErr(w, 400, "worker_count must be 0–16 (0 uses global default)")
 		return
 	}
 	// 【二开·P-TPL·S13】止
@@ -1900,18 +1903,18 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		if errors.Is(err, db.ErrTaskCategoryInvalid) || errors.Is(err, db.ErrTaskCategoryNotFound) {
-			writeErr(w, 400, "任务分类不存在或无效")
+			writeErr(w, 400, "Task category does not exist or is invalid")
 			return
 		}
 		if errors.Is(err, db.ErrTaskCompanyIDsInvalid) || errors.Is(err, db.ErrTaskCompanyNotFound) {
-			writeErr(w, 400, "关联企业不存在或无效")
+			writeErr(w, 400, "Linked company does not exist or is invalid")
 			return
 		}
 		writeErr(w, 500, err.Error())
 		return
 	}
 	// 【二开·P-LOG·S13】INFO 记建任务全貌（在既有 [task] 行上补二开字段）。
-	log.Printf("[task] 新建任务 #%s «%s» 目标: %s（pre_agent=%q 	worker_count=%d planner_template_id=%d review_enabled=%v asset_mode=%s）", t.ID, req.Description, req.Goal, req.PreAgent, req.WorkerCount, req.PlannerTemplateID, reviewEnabled, assetMode)
+	log.Printf("[task] created task #%s «%s» goal: %s (pre_agent=%q worker_count=%d planner_template_id=%d review_enabled=%v asset_mode=%s)", t.ID, req.Description, req.Goal, req.PreAgent, req.WorkerCount, req.PlannerTemplateID, reviewEnabled, assetMode)
 	// 共享的建后流程(seed + 种子意图 + 后台目标分解 + engine.Run),与 spawn_task 复用同一段。
 	// launchTask 内部异步,不阻塞 UI —— 目标分解在后台可见地进行。
 	s.launchTask(t, req.Description+" "+req.Goal, req.SeedFirstIntent != nil && *req.SeedFirstIntent)
@@ -1922,11 +1925,11 @@ func (s *Server) validateTaskProfileIDs(ids []int64) error {
 	seen := map[int64]bool{}
 	for _, id := range ids {
 		if id <= 0 || seen[id] {
-			return fmt.Errorf("LLM 配置 id 无效或重复")
+			return fmt.Errorf("LLM profile IDs are invalid or duplicated")
 		}
 		seen[id] = true
 		if _, ok := s.loadProfileConfig(id); !ok {
-			return fmt.Errorf("LLM 配置 #%d 不存在或未设置 API Key", id)
+			return fmt.Errorf("LLM profile #%d does not exist or has no API key", id)
 		}
 	}
 	return nil
@@ -2050,12 +2053,12 @@ func (s *Server) llmHost() string {
 func (s *Server) seed(t *Task, text string) {
 	scheme, host, port, ok := parseTarget(text)
 	if !ok {
-		log.Printf("[seed] task %s: 未能从 %q 解析出目标 host/IP，不创建站点（请手动配置 scope）", t.ID, text)
+		log.Printf("[seed] task %s: could not parse target host/IP from %q; not creating a site (configure scope manually)", t.ID, text)
 		return
 	}
 	// P0-1 guard: never treat the configured LLM gateway as a target.
 	if gw := s.llmHost(); gw != "" && host == gw {
-		log.Printf("[seed] task %s: 目标 %q 是 LLM 网关，拒绝作为渗透目标", t.ID, host)
+		log.Printf("[seed] task %s: target %q is an LLM gateway; rejected as a penetration testing target", t.ID, host)
 		return
 	}
 
@@ -2074,7 +2077,7 @@ func (s *Server) seed(t *Task, text string) {
 			rootID, _ = as.UpsertRootDomain(db.UpsertRootDomainReq{Domain: host, TaskID: taskID})
 		}
 		if rootID > 0 {
-			_ = as.SetTaskAssetSource(taskID, rootID, "task", "由任务描述或目标初始化", nil)
+			_ = as.SetTaskAssetSource(taskID, rootID, "task", "Initialized from task description or goal", nil)
 		}
 	}
 	// anchor the seeded assets to this task's begin root as lineage/provenance
@@ -2084,7 +2087,7 @@ func (s *Server) seed(t *Task, text string) {
 			_ = t.Store.Anchor(begin, rootID)
 		}
 	}
-	log.Printf("[seed] task %s: 目标站点 %s", t.ID, u)
+	log.Printf("[seed] task %s: target site %s", t.ID, u)
 	// 不在这里 Notify:首轮是否触发统一由 engine.Run 的 HasActiveIntent 决定(种子意图任务
 	// 跳过首轮)。seed 早于 Run 执行,若在此 Notify 会 buffered 到通道、被 plannerLoop 启动时
 	// 消费掉而绕过 Run 的门控 → 种子任务仍误触发首轮。
@@ -2101,7 +2104,7 @@ func (s *Server) seed(t *Task, text string) {
 // 保留 origin fact 的 derived_from 链接，确保种子意图能追溯回任务根事实。
 // 日志明确区分「custom proposed 等待执行器领取」与「普通 open 种子」。
 func (s *Server) seedFirstIntent(t *Task) {
-	summary := fmt.Sprintf("完成任务目标：%s（任务：%s）", t.Goal, t.Description)
+	summary := fmt.Sprintf("Complete task goal: %s (task: %s)", t.Goal, t.Description)
 	payload := map[string]any{"summary": summary}
 	var id int64
 	var err error
@@ -2110,20 +2113,20 @@ func (s *Server) seedFirstIntent(t *Task) {
 		// 是否受 Planner 控制由 Agent 当前 planner_controlled 决定，对所有 custom intent 生效。
 		payload["executor"] = t.PreAgent
 		id, err = t.Store.AddNode(db.KindIntent, payload, 8, "proposed", "seed", nil)
-		log.Printf("[seed] task %s: 已下发 custom proposed 种子意图（预选执行器 %q，等待执行器领取）", t.ID, t.PreAgent)
+		log.Printf("[seed] task %s: submitted custom proposed seed intent (preselected executor %q; awaiting executor claim)", t.ID, t.PreAgent)
 	} else {
 		// 未指定 pre_agent 时继续创建 open。
 		id, err = t.Store.AddIntent(payload, 8, nil, "seed")
 	}
 	if err != nil {
-		log.Printf("[seed] task %s: 下发种子意图失败: %v", t.ID, err)
+		log.Printf("[seed] task %s: failed to submit seed intent: %v", t.ID, err)
 		return
 	}
 	if origin, _ := t.Store.OriginFactID(); origin > 0 {
 		_ = t.Store.Link(origin, db.RelDerivedFrom, id)
 	}
 	if t.PreAgent == "" {
-		log.Printf("[seed] task %s: 已下发种子意图 #%d", t.ID, id)
+		log.Printf("[seed] task %s: submitted seed intent #%d", t.ID, id)
 	}
 }
 
@@ -2148,7 +2151,7 @@ func (s *Server) taskCoverage(w http.ResponseWriter, r *http.Request) {
 	}
 	as := s.m.Assets()
 	if as == nil {
-		writeErr(w, 503, "asset store 未启用")
+		writeErr(w, 503, "Asset store is disabled")
 		return
 	}
 	// 资产覆盖度功能关闭 → 短路返回 {enabled:false}，前端据此隐藏覆盖度卡片/进度。
@@ -2176,7 +2179,7 @@ func (s *Server) taskCoverageGraph(w http.ResponseWriter, r *http.Request) {
 	}
 	as := s.m.Assets()
 	if as == nil {
-		writeErr(w, 503, "asset store 未启用")
+		writeErr(w, 503, "Asset store is disabled")
 		return
 	}
 	taskID, _ := strconv.ParseInt(t.ID, 10, 64)
@@ -2198,7 +2201,7 @@ func (s *Server) taskAssetRefs(w http.ResponseWriter, r *http.Request) {
 	}
 	assetID, _ := strconv.ParseInt(r.URL.Query().Get("asset_id"), 10, 64)
 	if assetID <= 0 {
-		writeErr(w, 400, "需要 asset_id")
+		writeErr(w, 400, "asset_id is required")
 		return
 	}
 	refs, err := t.Store.AssetRefsWithSources(assetID)
@@ -2232,7 +2235,7 @@ func (s *Server) taskScopeList(w http.ResponseWriter, r *http.Request) {
 	}
 	as := s.m.Assets()
 	if as == nil {
-		writeErr(w, 503, "asset store 未启用")
+		writeErr(w, 503, "Asset store is disabled")
 		return
 	}
 	taskID, _ := strconv.ParseInt(t.ID, 10, 64)
@@ -2252,7 +2255,7 @@ func (s *Server) taskScopeAdd(w http.ResponseWriter, r *http.Request) {
 	}
 	as := s.m.Assets()
 	if as == nil {
-		writeErr(w, 503, "asset store 未启用")
+		writeErr(w, 503, "Asset store is disabled")
 		return
 	}
 	var body struct {
@@ -2280,7 +2283,7 @@ func (s *Server) taskScopeDelete(w http.ResponseWriter, r *http.Request) {
 	}
 	as := s.m.Assets()
 	if as == nil {
-		writeErr(w, 503, "asset store 未启用")
+		writeErr(w, 503, "Asset store is disabled")
 		return
 	}
 	taskID, _ := strconv.ParseInt(t.ID, 10, 64)
@@ -2693,7 +2696,7 @@ func (s *Server) patchFinding(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if !notified && from != *body.Status {
-			log.Printf("[notify] 状态变更事件未登记 finding=%d %s→%s（状态已更新）", id, from, *body.Status)
+			log.Printf("[notify] status-change event was not registered finding=%d %s→%s (status already updated)", id, from, *body.Status)
 		}
 	}
 	if body.Severity != nil {
@@ -3670,7 +3673,7 @@ func (s *Server) getTrafficBlob(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
 	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", hash+".bin"))
 	if _, err := io.Copy(w, f); err != nil {
-		log.Printf("[traffic] 下载 blob %s 中断：%v", hash, err)
+		log.Printf("[traffic] blob %s download interrupted: %v", hash, err)
 	}
 }
 
@@ -3746,7 +3749,7 @@ func notifyDigestIntervalMin(pg *db.DB) int {
 func (s *Server) pgDetectPython(w http.ResponseWriter, r *http.Request) {
 	p := detectPython()
 	if p == "" {
-		writeErr(w, 404, "未检测到 python(python3/python 均不在 PATH)")
+		writeErr(w, 404, "Python not detected (neither python3 nor python is in PATH)")
 		return
 	}
 	if err := s.m.pg.SetSetting(settingPythonInterp, p); err != nil {
@@ -3800,7 +3803,7 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 	if req.LogLevel != nil {
 		// 【P-LOG·M0】先校验再落库再热切换；非法值 400。
 		if _, ok := xlog.ParseLevel(*req.LogLevel); !ok {
-			writeErr(w, 400, "log_level 必须是 debug/info/warn/error 之一")
+			writeErr(w, 400, "log_level must be debug/info/warn/error")
 			return
 		}
 		if err := s.m.pg.SetSetting(settingLogLevel, *req.LogLevel); err != nil {
@@ -3808,7 +3811,7 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		xlog.SetLevel(*req.LogLevel)
-		xlog.Infof("[system] log level → %s（热切换，立即生效）", xlog.LevelString())
+		xlog.Infof("[system] log level → %s (changed live; effective immediately)", xlog.LevelString())
 	}
 	if req.ConstraintsInjectPlanner != nil {
 		if err := s.m.pg.SetBool(settingConstraintsInjectPlanner, *req.ConstraintsInjectPlanner); err != nil {
@@ -3841,7 +3844,7 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 		// 留着尾部斜杠会产出 "//function/..." 这种双斜杠路径。
 		base := trimTrailingSlash(strings.TrimSpace(*req.NotifyBaseURL))
 		if base != "" && !strings.HasPrefix(base, "http://") && !strings.HasPrefix(base, "https://") {
-			writeErr(w, 400, "回链地址需以 http:// 或 https:// 开头")
+			writeErr(w, 400, "Callback URL must start with http:// or https://")
 			return
 		}
 		if err := s.m.pg.SetSetting(settingNotifyPublicBaseURL, base); err != nil {
@@ -3852,7 +3855,7 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 	if req.NotifyDigestMins != nil {
 		// 下限 1 分钟:更短的周期等于实时推送,那样应该直接把渠道改成 realtime 模式。
 		if *req.NotifyDigestMins < 1 || *req.NotifyDigestMins > 24*60 {
-			writeErr(w, 400, "汇总周期需在 1 到 1440 分钟之间")
+			writeErr(w, 400, "Digest interval must be between 1 and 1440 minutes")
 			return
 		}
 		if err := s.m.pg.SetSetting(settingNotifyDigestMinutes, strconv.Itoa(*req.NotifyDigestMins)); err != nil {
@@ -3891,7 +3894,7 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 		// 审计 🔴：解释器路径必须过校验（绝对路径+存在可执行+basename 像 python），
 		// 否则 PUT {"python_interpreter":"/bin/sh"} 即把脚本工具降级成 shell RCE。
 		if err := validatePythonInterp(p); err != nil {
-			writeErr(w, 400, "python_interpreter 不合法: "+err.Error())
+			writeErr(w, 400, "Invalid python_interpreter: "+err.Error())
 			return
 		}
 		if err := s.m.pg.SetSetting(settingPythonInterp, p); err != nil {
@@ -4030,7 +4033,7 @@ func (s *Server) testWebSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(results) == 0 {
-		writeJSON(w, 200, map[string]any{"ok": false, "error": "搜索返回 0 条结果（可能被限流或代理不通）", "backend": backend})
+		writeJSON(w, 200, map[string]any{"ok": false, "error": "Search returned 0 results (possible rate limiting or unavailable proxy)", "backend": backend})
 		return
 	}
 	writeJSON(w, 200, map[string]any{"ok": true, "count": len(results), "backend": backend})
@@ -4066,7 +4069,7 @@ func (s *Server) newMainSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.engine.IsDeleting(t.ID) {
-		writeErr(w, 409, "任务正在删除，无法新建会话")
+		writeErr(w, 409, "Task is being deleted; a new conversation cannot be created")
 		return
 	}
 	m, err := t.Store.NewMainSession()
@@ -4082,7 +4085,7 @@ func (s *Server) newMainSession(w http.ResponseWriter, r *http.Request) {
 // 正常多工具会话以分钟计，10 分钟对交互场景足够宽松；超时只终止本轮，可再发消息。
 const mainChatTurnTimeout = 10 * time.Minute
 
-var errMainChatTimeout = errors.New("主 Agent 会话超时(10 分钟兜底)")
+var errMainChatTimeout = errors.New("Main Agent conversation timed out (10-minute fallback)")
 
 func (s *Server) chat(w http.ResponseWriter, r *http.Request) {
 	t := s.m.ResolveTask(r.URL.Query().Get("task"))
@@ -4091,7 +4094,7 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.engine.IsDeleting(t.ID) {
-		writeErr(w, 409, "任务正在删除，无法发送新消息")
+		writeErr(w, 409, "Task is being deleted; new messages cannot be sent")
 		return
 	}
 	// 注意:任务暂停(paused)不拦截主 Agent 对话。主 Agent 编排会话独立于 planner/
@@ -4114,12 +4117,12 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request) {
 	s.chatMu.Lock()
 	if s.engine.IsDeleting(t.ID) {
 		s.chatMu.Unlock()
-		writeErr(w, 409, "任务正在删除，无法发送新消息")
+		writeErr(w, 409, "Task is being deleted; new messages cannot be sent")
 		return
 	}
 	if s.chatBusy[t.ID] {
 		s.chatMu.Unlock()
-		writeErr(w, 409, "主 Agent 正在处理上一条消息，请稍候")
+		writeErr(w, 409, "Main Agent is still processing the previous message. Please wait")
 		return
 	}
 	// WithTimeoutCause returns CancelFunc, while chatCancel must preserve the
@@ -4192,10 +4195,10 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request) {
 			defer s.engine.EndLLMCall(t.ID)
 			_, err := ma.Chat(ctx, maTaskID, mainSeg, s.m.Assets(), t.Store, t.Goal, agentMsg, emit, t.Notify, resume, t.NotifyGoal, t.NotifyHint)
 			if err != nil && ctx.Err() == nil {
-				s.engine.emitActivity(t, db.Activity{Worker: "mainagent", Kind: "text", IsError: true, Summary: "（主 Agent 出错：" + err.Error() + "）", MainSeg: segPtr})
+				s.engine.emitActivity(t, db.Activity{Worker: "mainagent", Kind: "text", IsError: true, Summary: "(Main Agent error: " + err.Error() + "）", MainSeg: segPtr})
 			}
 			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-				s.engine.emitActivity(t, db.Activity{Worker: "mainagent", Kind: "text", IsError: true, Summary: "（主 Agent 本轮超时已终止，可重发消息）", MainSeg: segPtr})
+				s.engine.emitActivity(t, db.Activity{Worker: "mainagent", Kind: "text", IsError: true, Summary: "(Main Agent turn timed out and was terminated; you may resend the message)", MainSeg: segPtr})
 			}
 		}()
 		writeJSON(w, 202, map[string]any{"status": "accepted", "mode": "llm"})
@@ -4264,11 +4267,11 @@ func (s *Server) fallbackChat(t *Task, msg string) string {
 	case strings.HasPrefix(m, "意图") || strings.HasPrefix(lower, "intent"):
 		text := strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(m, "意图"), "intent"))
 		_, _ = t.Store.AddIntent(map[string]any{"summary": text}, 9, nil, "human")
-		return "已注入一条高优先级意图：" + text
+		return "Injected a high-priority intent: " + text
 	case strings.HasPrefix(m, "提示") || strings.HasPrefix(lower, "hint"):
 		text := strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(m, "提示"), "hint"))
 		_, _ = t.Store.AddNode(db.KindHint, map[string]any{"text": text}, 0, "active", "human", nil)
-		return "已记录提示，规划者下次会读到：" + text
+		return "Hint recorded; the planner will read it next round: " + text
 	default:
 		assetCounts, _ := s.m.Assets().CountsByType()
 		assets := 0
@@ -4277,7 +4280,7 @@ func (s *Server) fallbackChat(t *Task, msg string) string {
 		}
 		fnd, _ := t.Store.ListByKind(db.KindFinding, 1000)
 		fr, _ := t.Store.Frontier(1000)
-		return fmt.Sprintf("（规则模式，未配置 LLM）当前态势：资产 %d，待领意图 %d，确认发现 %d。\n可用指令：以\"意图 ...\"注入意图，\"提示 ...\"给规划者提示。", assets, len(fr), len(fnd))
+		return fmt.Sprintf("(Rule mode; no LLM configured) Current situation: %d assets, %d unclaimed intents, %d confirmed findings.\nCommands: use \"intent ...\" to inject an intent, or \"hint ...\" to give the planner a hint.", assets, len(fr), len(fnd))
 	}
 }
 

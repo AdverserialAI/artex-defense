@@ -52,7 +52,7 @@ func (s *Server) hostTools() ([]actool.CoreTool, map[string][]string) {
 	tools = append(tools, s.platformTools()...) // 平台操作工具(建改 skill/工具/MCP，给 Auto 用)
 	custom, err := s.customTools()
 	if err != nil {
-		log.Printf("[custom-tool] 加载失败: %v", err)
+		log.Printf("[custom-tool] failed to load: %v", err)
 		return tools, nil
 	}
 	tools = append(tools, custom...)
@@ -165,11 +165,11 @@ func (s *Server) delegateToTask(ctx context.Context, in json.RawMessage, pick fu
 	}
 	_ = json.Unmarshal(in, &head)
 	if strings.TrimSpace(head.TaskID) == "" {
-		return actool.Errorf("task_id 为必填"), nil
+		return actool.Errorf("task_id is required"), nil
 	}
 	t, ok := s.m.Task(head.TaskID)
 	if !ok {
-		return actool.Errorf("task 不存在: " + head.TaskID), nil
+		return actool.Errorf("Task does not exist: " + head.TaskID), nil
 	}
 	var m map[string]json.RawMessage
 	_ = json.Unmarshal(in, &m)
@@ -188,7 +188,7 @@ func (s *Server) delegateToTask(ctx context.Context, in json.RawMessage, pick fu
 
 func (s *Server) toolListTasks() actool.CoreTool {
 	return roTool("list_tasks",
-		"列出所有任务(id/描述/目标/状态/运行时长/父任务/LLM 配置)，编排 agent 用它掌握全局、看哪些任务卡太久、各自用哪个 LLM。运行时长：运行中=创建→现在，终态=创建→最后活动(秒)。llm_profile：任务 planner/worker 用的配置名，(激活配置)=跟随全局激活。",
+		"List all tasks with ID, description, goal, status, run duration, parent task, and LLM profile so the orchestration agent can understand global progress, stalled tasks, and model assignments. Run duration is creation to now for running tasks and creation to last activity for terminal tasks (seconds). llm_profile shows the planner/worker profile name; (active profile) means it follows the global active profile.",
 		objSchema(map[string]any{}),
 		func(context.Context, json.RawMessage) (actool.Result, error) {
 			lastAct, _ := s.m.PG().LastActivityAll()
@@ -220,11 +220,11 @@ func (s *Server) toolListTasks() actool.CoreTool {
 				}
 				llmState := t.llmStateSnapshot()
 				if llmState.ProfileID == nil {
-					row["llm_profile"] = "(激活配置)"
+					row["llm_profile"] = "(active configuration)"
 				} else if n, ok := profName[*llmState.ProfileID]; ok {
 					row["llm_profile"] = n
 				} else {
-					row["llm_profile"] = fmt.Sprintf("#%d(已删除)", *llmState.ProfileID)
+					row["llm_profile"] = fmt.Sprintf("#%d (deleted)", *llmState.ProfileID)
 				}
 				out = append(out, row)
 			}
@@ -236,7 +236,7 @@ func (s *Server) toolListTasks() actool.CoreTool {
 // orchestration agent can pick one for spawn_task's llm_profile. Never leaks keys.
 func (s *Server) toolListLLMProfiles() actool.CoreTool {
 	return roTool("list_llm_profiles",
-		"列出可用的 LLM 配置(profile)：id、名称、模型、格式、是否为当前激活配置。用 id 给 spawn_task 的 llm_profile_id 参数指定子任务专属 LLM（如侦察用便宜模型、利用用强模型）。不含 API Key。",
+		"List available LLM profiles with ID, name, model, format, and whether each is active. Use the ID as spawn_task's llm_profile_id to assign a task-specific model, such as a cheaper model for reconnaissance or a stronger model for exploitation. API keys are never included.",
 		objSchema(map[string]any{}),
 		func(context.Context, json.RawMessage) (actool.Result, error) {
 			profs, err := s.m.pg.ListProfiles()
@@ -269,24 +269,24 @@ func (s *Server) resolveSpawnReview(inherited bool, scenarioNKey string) (bool, 
 
 func (s *Server) toolSpawnTask() actool.CoreTool {
 	return wrTool("spawn_task",
-		"新建一个子任务并启动探索引擎，返回 task_id。子任务使用独立探索链路；带 finding_id 时仅复制该 Finding 的完整祖先链。parent_ref 可选，仅用于父子关联。",
+		"Create a child task and start its exploration engine, returning task_id. The child has an independent exploration graph; when finding_id is provided, only that Finding's complete ancestor chain is copied. parent_ref is optional and records only the parent/child relationship.",
 		objSchema(map[string]any{
-			"finding_id":             map[string]any{"type": "integer", "description": "内网渗透派发必填：触发 Finding 的全局 id，同时用于按实际 IP/域名做跨任务去重和选择要复制的 Finding 血缘链"},
-			"target_asset":           strParam("可选：Finding 关联多个主机时选择本次主目标；必须属于该 Finding"),
-			"name":                   strParam("任务列表短名称；内网子任务由服务端统一规范为「内网渗透·<立足点 host>」"),
-			"description":            strParam("任务完整执行说明"),
-			"goal":                   strParam("任务目标(要达成什么)"),
-			"parent_ref":             strParam("可选：父任务 id(做父子关联)"),
-			"llm_profile_id":         map[string]any{"type": "integer", "description": "可选：指定本子任务 planner/worker 用的 LLM 配置 id(见 list_llm_profiles)；留空则继承父任务、再回退全局激活配置"},
-			"timeout_seconds":        map[string]any{"type": "integer", "description": "可选：任务级超时(秒)。到点后触发优雅收尾并进入 timeout 终态；留空或 0 = 不限时"},
-			"plan_heartbeat_seconds": map[string]any{"type": "integer", "description": "可选：planner 心跳触发间隔(秒)。距上轮规划结束/任务开始满该值且期间无触发 → 触发一轮规划(兜底死锁 + 唤醒去监督飞行中的 worker)。留空或 0 = 默认 600(10min)；"},
-			"seed_first_intent":      map[string]any{"type": "boolean", "description": "可选：对于简单任务可开启，创建时直接下发一条种子意图(内容=描述+目标)让 worker 免等首轮 planner 直接开跑测试；默认 false(走标准先规划再执行)。"},
+			"finding_id":             map[string]any{"type": "integer", "description": "Required for internal penetration testing dispatch: triggering Finding's global ID, used for cross-task deduplication by actual IP/domain and selecting the Finding ancestry chain to copy"},
+			"target_asset":           strParam("Optional: select the primary target when the Finding links to multiple hosts; it must belong to this Finding"),
+			"name":                   strParam("Short task-list name; internal subtasks are normalized by the server to Internal Penetration Testing · <foothold host>"),
+			"description":            strParam("Complete task execution instructions"),
+			"goal":                   strParam("Task goal (what to achieve)"),
+			"parent_ref":             strParam("Optional: parent task ID (for parent/child linkage)"),
+			"llm_profile_id":         map[string]any{"type": "integer", "description": "Optional: LLM profile ID for this subtask's planner/worker (see list_llm_profiles); inherits the parent's configuration, then the globally active profile, when omitted"},
+			"timeout_seconds":        map[string]any{"type": "integer", "description": "Optional: task timeout in seconds. Triggers graceful finalization and the timeout terminal state; omitted or 0 means unlimited"},
+			"plan_heartbeat_seconds": map[string]any{"type": "integer", "description": "Optional: planner heartbeat interval in seconds. Runs planning when this interval has elapsed since the last planning round/task start without another trigger (deadlock fallback and supervision of active workers). Omitted or 0 defaults to 600 (10 minutes)"},
+			"seed_first_intent":      map[string]any{"type": "boolean", "description": "Optional: for simple tasks, immediately submit one seed intent containing description+goal so the worker can begin without waiting for initial planning. Defaults to false (plan before execution)"},
 			// 【二开·P-ORCH·S8-1 spawn_task 四参数 schema】起 —— 子任务建任务四参数的 JSON Schema
-			"pre_agent":             strParam("可选：种子意图的自定义执行器 executor_key（该 agent 须已启用、非内置、已声明 executor_key）；留空=默认 worker 执行种子意图"),
-			"planner_prompt":        strParam("可选：子任务 planner 提示词任务级覆盖【全文】（上限 32KB）。创建时原子写入 tasks.planner_prompt_override，运行中无修改入口；与 planner_template_id 同传时本字段优先"),
-			"planner_template_id":   map[string]any{"type": "integer", "description": "可选（兼容旧调用）：从 planner 模板库按数字 id 选预设模板，正文在创建时快照进 planner_prompt_override；新调用优先使用 planner_template_nkey"},
-			"planner_template_nkey": strParam("可选：从 planner 模板库按稳定规范化名 nkey 选预设模板，正文在创建时快照；与 planner_template_id 互斥，与 planner_prompt 同传时 planner_prompt 优先"),
-			"worker_count":          map[string]any{"type": "integer", "description": "可选：任务级 worker 并发数，合法区间 0~16；0 或省略=跟随全局默认"},
+			"pre_agent":             strParam("Optional: custom executor_key for the seed intent (agent must be enabled, non-built-in, and declare executor_key); empty uses the default worker"),
+			"planner_prompt":        strParam("Optional: complete task-level planner prompt override (maximum 32KB). Written atomically to tasks.planner_prompt_override at creation; cannot be edited while running. Takes precedence over planner_template_id"),
+			"planner_template_id":   map[string]any{"type": "integer", "description": "Optional (legacy calls): select a preset planner template by numeric ID; its body is snapshotted into planner_prompt_override at creation. Prefer planner_template_nkey for new calls"},
+			"planner_template_nkey": strParam("Optional: select a preset planner template by stable normalized name nkey; body is snapshotted at creation. Mutually exclusive with planner_template_id; planner_prompt takes precedence when both are provided"),
+			"worker_count":          map[string]any{"type": "integer", "description": "Optional: task-level worker concurrency, 0–16; 0 or omitted uses the global default"},
 			// 【二开·P-ORCH·S8-1 spawn_task 四参数 schema】止
 		}, "description", "goal"),
 		func(_ context.Context, in json.RawMessage) (actool.Result, error) {
@@ -313,28 +313,28 @@ func (s *Server) toolSpawnTask() actool.CoreTool {
 			}
 			_ = json.Unmarshal(in, &a)
 			// 【二开·P-LOG·S8】起 —— 四参数接收留痕（DEBUG 级；排障：LLM 到底传了什么）
-			xlog.Debugf("[spawn] spawn_task 收到参数：pre_agent=%q planner_template_id=%d planner_template_nkey=%q worker_count=%d planner_prompt_bytes=%d", a.PreAgent, a.PlannerTemplateID, a.PlannerTemplateNKey, a.WorkerCount, len(a.PlannerPrompt))
+			xlog.Debugf("[spawn] spawn_task parameters: pre_agent=%q planner_template_id=%d planner_template_nkey=%q worker_count=%d planner_prompt_bytes=%d", a.PreAgent, a.PlannerTemplateID, a.PlannerTemplateNKey, a.WorkerCount, len(a.PlannerPrompt))
 			// 【二开·P-LOG·S8】止
 			if strings.TrimSpace(a.Description) == "" {
-				a.Description = "未命名任务"
+				a.Description = "Untitled task"
 			}
 			if strings.TrimSpace(a.Goal) == "" {
-				return actool.Errorf("goal 为必填"), nil
+				return actool.Errorf("goal is required"), nil
 			}
 			// 【二开·P-ORCH·S8-3 spawn_task 参数校验】起 —— pre_agent/planner_prompt 校验（与 00 册 S7 createTask 同款规则；工具侧失败=错误文本回 LLM）
 			if a.PreAgent != "" {
 				if err := validatePreAgent(s.m.PG(), a.PreAgent); err != nil {
-					log.Printf("[spawn] spawn_task 不予通过 ⚠ pre_agent=%q 无效（须为已启用自定义 agent 声明的 executor_key）", a.PreAgent)
-					return actool.Errorf(fmt.Sprintf("pre_agent 无效：须为已启用自定义 agent 声明的 executor_key；可用：%s", s.executorKeyList())), nil
+					log.Printf("[spawn] spawn_task rejected ⚠ invalid pre_agent=%q (must be an executor_key declared by an enabled custom agent)", a.PreAgent)
+					return actool.Errorf(fmt.Sprintf("Invalid pre_agent: must be an executor_key declared by an enabled custom agent; available: %s", s.executorKeyList())), nil
 				}
 			}
 			if len(a.PlannerPrompt) > 32*1024 {
-				log.Printf("[spawn] spawn_task 不予通过 ⚠ planner_prompt 超长：bytes=%d（上限 32KB）", len(a.PlannerPrompt))
-				return actool.Errorf("planner_prompt 超长（上限 32KB）"), nil
+				log.Printf("[spawn] spawn_task rejected ⚠ planner_prompt too long: bytes=%d (maximum 32KB)", len(a.PlannerPrompt))
+				return actool.Errorf("planner_prompt is too long (maximum 32KB)"), nil
 			}
 			plannerNKey := strings.TrimSpace(a.PlannerTemplateNKey)
 			if plannerNKey != "" && a.PlannerTemplateID != 0 {
-				return actool.Errorf("planner_template_id 与 planner_template_nkey 互斥，请只传一个"), nil
+				return actool.Errorf("planner_template_id and planner_template_nkey are mutually exclusive; provide only one"), nil
 			}
 			// 【二开·P-ORCH·S8-3 spawn_task 参数校验】止
 			// 【二开·P-ORCH·S8-4 spawn_task 模板与 worker 校验】起 —— 模板快照解析、场景分类与 worker_count 校验
@@ -358,15 +358,15 @@ func (s *Server) toolSpawnTask() actool.CoreTool {
 					tpl, tplErr = s.m.PG().GetPlannerTemplate(a.PlannerTemplateID)
 				}
 				if tplErr != nil {
-					return actool.Errorf(fmt.Sprintf("读取 planner 模板失败：%v", tplErr)), nil
+					return actool.Errorf(fmt.Sprintf("Failed to read planner template: %v", tplErr)), nil
 				}
 				if tpl == nil {
-					log.Printf("[spawn] spawn_task 不予通过 ⚠ %s 不存在", reference)
-					return actool.Errorf(fmt.Sprintf("%s 不存在；可用模板：%s", reference, s.plannerTemplateList())), nil
+					log.Printf("[spawn] spawn_task rejected ⚠ %s does not exist", reference)
+					return actool.Errorf(fmt.Sprintf("%s does not exist; available templates: %s", reference, s.plannerTemplateList())), nil
 				}
 				if err := validatePlannerTemplateBody(tpl.Body); err != nil {
-					log.Printf("[spawn] spawn_task 不予通过 ⚠ 模板 #%d 渲染校验不通过：%v", tpl.ID, err)
-					return actool.Errorf(fmt.Sprintf("模板 #%d 渲染校验失败：%s", tpl.ID, err.Error())), nil
+					log.Printf("[spawn] spawn_task rejected ⚠ template #%d failed render validation: %v", tpl.ID, err)
+					return actool.Errorf(fmt.Sprintf("Template #%d failed render validation: %s", tpl.ID, err.Error())), nil
 				}
 				plannerPrompt = tpl.Body
 			}
@@ -374,7 +374,7 @@ func (s *Server) toolSpawnTask() actool.CoreTool {
 			scenarioNKey := plannerNKey
 			if scenarioNKey == "" && a.PlannerTemplateID > 0 {
 				if tpl, tplErr := s.m.PG().GetPlannerTemplate(a.PlannerTemplateID); tplErr != nil {
-					return actool.Errorf(fmt.Sprintf("读取 planner 模板失败：%v", tplErr)), nil
+					return actool.Errorf(fmt.Sprintf("Failed to read planner template: %v", tplErr)), nil
 				} else if tpl != nil {
 					scenarioNKey = tpl.NKey
 				}
@@ -384,17 +384,17 @@ func (s *Server) toolSpawnTask() actool.CoreTool {
 			if scenarioNKey != "" {
 				cat, catErr := s.m.PG().GetTaskCategoryByNKey(scenarioNKey)
 				if catErr != nil {
-					return actool.Errorf(fmt.Sprintf("读取 Worker 场景失败：%v", catErr)), nil
+					return actool.Errorf(fmt.Sprintf("Failed to read Worker scenario: %v", catErr)), nil
 				}
 				if cat != nil {
 					categoryID = &cat.ID
 					if cat.DefaultWorkerTemplateID > 0 {
 						tpl, tplErr := s.m.PG().GetWorkerTemplate(cat.DefaultWorkerTemplateID)
 						if tplErr != nil {
-							return actool.Errorf(fmt.Sprintf("读取 Worker 模板失败：%v", tplErr)), nil
+							return actool.Errorf(fmt.Sprintf("Failed to read Worker template: %v", tplErr)), nil
 						}
 						if tpl == nil {
-							return actool.Errorf(fmt.Sprintf("场景 %q 的 Worker 模板 #%d 不存在", scenarioNKey, cat.DefaultWorkerTemplateID)), nil
+							return actool.Errorf(fmt.Sprintf("Worker template for scenario %q (#%d) does not exist", scenarioNKey, cat.DefaultWorkerTemplateID)), nil
 						}
 						workerPrompt = tpl.Body
 					}
@@ -403,16 +403,16 @@ func (s *Server) toolSpawnTask() actool.CoreTool {
 			if workerPrompt == "" {
 				body, bodyErr := defaultWorkerPrompt(s.m.PG())
 				if bodyErr != nil {
-					return actool.Errorf(fmt.Sprintf("读取默认 Worker 模板失败：%v", bodyErr)), nil
+					return actool.Errorf(fmt.Sprintf("Failed to read default Worker template: %v", bodyErr)), nil
 				}
 				workerPrompt = body
 			}
 			if err := validateWorkerTemplateBody(workerPrompt); err != nil {
-				return actool.Errorf("Worker 模板渲染校验失败：" + err.Error()), nil
+				return actool.Errorf("Worker template render validation failed: " + err.Error()), nil
 			}
 			if err := validateWorkerCount(a.WorkerCount); err != nil {
-				log.Printf("[spawn] spawn_task 不予通过 ⚠ worker_count=%d 越界（合法 0~16）", a.WorkerCount)
-				return actool.Errorf("worker_count 合法区间 0~16（0=跟随全局）"), nil
+				log.Printf("[spawn] spawn_task rejected ⚠ worker_count=%d out of range (valid: 0–16)", a.WorkerCount)
+				return actool.Errorf("worker_count must be 0–16 (0 uses global default)"), nil
 			}
 			// 【二开·P-ORCH·S8-4 spawn_task 模板与 worker 校验】止
 			if a.TimeoutSeconds < 0 {
@@ -422,20 +422,20 @@ func (s *Server) toolSpawnTask() actool.CoreTool {
 			// 这是 LLM 无法绕过的代码侧硬闸门，与父任务 task_constraints 的 deny 闸门互补。
 			if a.ParentRef != "" {
 				if rule := s.matchForbiddenRule(a.ParentRef, a.Goal); rule != "" {
-					log.Printf("[spawn] spawn_task 不予通过 ⚠ 被父任务约束拦截：rule=%q child_goal=%q", rule, a.Goal)
-					return actool.Errorf(fmt.Sprintf("被父任务约束拦截：%s（子任务目标含被禁方向；如确属授权范围，请调整 goal 措辞或由人工建任务）", rule)), nil
+					log.Printf("[spawn] spawn_task rejected ⚠ blocked by parent task constraints: rule=%q child_goal=%q", rule, a.Goal)
+					return actool.Errorf(fmt.Sprintf("Blocked by parent task constraint: %s (subtask goal includes a forbidden direction; if authorized, adjust the goal wording or create the task manually)", rule)), nil
 				}
 				// 【二开·P-INTENT·U22】操作约束硬闸门：父任务 deny 约束「禁止X」同样拦截（结构化载体）
 				if rule := s.matchForbiddenConstraint(a.ParentRef, a.Goal); rule != "" {
-					log.Printf("[spawn] spawn_task 不予通过 ⚠ 被父任务操作约束拦截：rule=%q child_goal=%q", rule, a.Goal)
-					return actool.Errorf(fmt.Sprintf("被父任务操作约束拦截：deny 约束「%s」命中子任务目标（约束明确禁止的方向不得派生；如确属授权范围，请调整 goal 措辞或修改父任务约束）", rule)), nil
+					log.Printf("[spawn] spawn_task rejected ⚠ blocked by parent operational constraints: rule=%q child_goal=%q", rule, a.Goal)
+					return actool.Errorf(fmt.Sprintf("Blocked by parent operational constraint: deny rule '%s' matched the subtask goal (explicitly prohibited directions must not produce subtasks; if authorized, adjust the goal wording or modify parent constraints)", rule)), nil
 				}
 			}
 			// LLM profile resolution: explicit id > inherit parent's pin > active(nil).
 			var pin *int64
 			if id := parseProfileID(a.LLMProfileID); id > 0 {
 				if _, ok := s.loadProfileConfig(id); !ok {
-					return actool.Errorf(fmt.Sprintf("LLM 配置 #%d 不存在或未设置 API Key", id)), nil
+					return actool.Errorf(fmt.Sprintf("LLM profile #%d does not exist or has no API key", id)), nil
 				}
 				pin = &id
 			} else if a.ParentRef != "" {
@@ -458,11 +458,11 @@ func (s *Server) toolSpawnTask() actool.CoreTool {
 			inheritedReview := reviewEnabled
 			resolvedReview, reviewErr := s.resolveSpawnReview(inheritedReview, scenarioNKey)
 			if reviewErr != nil {
-				return actool.Errorf("读取 Review 场景默认失败：" + reviewErr.Error()), nil
+				return actool.Errorf("Failed to read default Review scenario: " + reviewErr.Error()), nil
 			}
 			reviewEnabled = resolvedReview
 			if !inheritedReview && reviewEnabled {
-				xlog.Infof("[spawn] spawn_task 审核开关按分类默认开启：场景 %s default_review_enabled=t", scenarioNKey)
+				xlog.Infof("[spawn] spawn_task review enabled by category default: scenario %s default_review_enabled=t", scenarioNKey)
 			}
 			var dispatchAssetKeys []string
 			if scenarioNKey == "内网渗透" {
@@ -497,7 +497,7 @@ func (s *Server) toolSpawnTask() actool.CoreTool {
 				return actool.Errorf(err.Error()), nil
 			}
 			// 【二开·P-LOG·S8】起 —— 子任务出生（INFO 级；编排链终点锚点）
-			log.Printf("[spawn] spawn_task 子任务出生：task_id=%s name=%q parent_ref=%q pre_agent=%q worker_count=%d prompt_snapshot_bytes=%d", t.ID, t.Name, a.ParentRef, a.PreAgent, a.WorkerCount, len(plannerPrompt))
+			log.Printf("[spawn] spawn_task created subtask: task_id=%s name=%q parent_ref=%q pre_agent=%q worker_count=%d prompt_snapshot_bytes=%d", t.ID, t.Name, a.ParentRef, a.PreAgent, a.WorkerCount, len(plannerPrompt))
 			// 【二开·P-LOG·S8】止
 			if a.ParentRef != "" {
 				t.ParentRef = a.ParentRef
@@ -514,8 +514,8 @@ func (s *Server) toolSpawnTask() actool.CoreTool {
 }
 
 func (s *Server) toolPauseTask() actool.CoreTool {
-	return wrTool("pause_task", "暂停指定任务(停止其 planner/worker 循环)。",
-		objSchema(map[string]any{"task_id": strParam("要暂停的任务 id")}, "task_id"),
+	return wrTool("pause_task", "Pause the specified task by stopping its planner and worker loops.",
+		objSchema(map[string]any{"task_id": strParam("ID of the task to pause")}, "task_id"),
 		func(_ context.Context, in json.RawMessage) (actool.Result, error) {
 			var a struct {
 				TaskID string `json:"task_id"`
@@ -523,7 +523,7 @@ func (s *Server) toolPauseTask() actool.CoreTool {
 			_ = json.Unmarshal(in, &a)
 			t, ok := s.m.Task(a.TaskID)
 			if !ok {
-				return actool.Errorf("task 不存在: " + a.TaskID), nil
+				return actool.Errorf("Task does not exist: " + a.TaskID), nil
 			}
 			if _, err := s.applyTaskControlWithCause(t, "pause", agent.AbortPausedByOrchestrator); err != nil {
 				return actool.Errorf(err.Error()), nil
@@ -533,8 +533,8 @@ func (s *Server) toolPauseTask() actool.CoreTool {
 }
 
 func (s *Server) toolGetTaskGraph() actool.CoreTool {
-	return roTool("get_task_graph", "读指定任务的探索图总览(同 graph_overview：资产计数/frontier/发现/覆盖等)，并附带该任务已派生的子任务列表(child_tasks：派发去重的依据)，用 task_id 指定任务。",
-		objSchema(map[string]any{"task_id": strParam("任务 id")}, "task_id"),
+	return roTool("get_task_graph", "Read a task's exploration overview (asset counts, frontier, findings, coverage, and more, matching graph_overview) plus its spawned child tasks in child_tasks for dispatch deduplication. Specify the task with task_id.",
+		objSchema(map[string]any{"task_id": strParam("Task ID")}, "task_id"),
 		func(ctx context.Context, in json.RawMessage) (actool.Result, error) {
 			res, err := s.delegateToTask(ctx, in, (*agent.ToolSet).GraphOverviewTool)
 			if err != nil {
@@ -566,30 +566,29 @@ func (s *Server) toolGetTaskGraph() actool.CoreTool {
 }
 
 func (s *Server) toolListTaskConstraints() actool.CoreTool {
-	return roTool("list_task_constraints", "只读列出指定任务的操作约束（allow/deny 列表，含来源 origin）。派生子任务前先读父任务约束：约束明确禁止的方向不得派生。用 task_id 指定任务。",
-		objSchema(map[string]any{"task_id": strParam("任务 id")}, "task_id"),
+	return roTool("list_task_constraints", "Read a task's operational constraints (allow/deny entries with origin). Read parent constraints before spawning a child task; directions explicitly forbidden by those constraints must not be spawned. Specify the task with task_id.",
+		objSchema(map[string]any{"task_id": strParam("Task ID")}, "task_id"),
 		func(ctx context.Context, in json.RawMessage) (actool.Result, error) {
 			return s.delegateToTask(ctx, in, (*agent.ToolSet).ListConstraintsTool)
 		})
 }
 
 func (s *Server) toolListTaskFindings() actool.CoreTool {
-	return roTool("list_task_findings", "读指定任务的确认漏洞(含 flag/PoC；每条带 id/task_id/intent_id/vulnclass/severity/摘要/状态)，用 task_id 指定任务。",
-		objSchema(map[string]any{"task_id": strParam("任务 id")}, "task_id"),
+	return roTool("list_task_findings", "Read a task's confirmed findings, including flags and PoC. Each entry includes id, task_id, intent_id, vulnerability class, severity, summary, and status. Specify the task with task_id.",
+		objSchema(map[string]any{"task_id": strParam("Task ID")}, "task_id"),
 		func(ctx context.Context, in json.RawMessage) (actool.Result, error) {
 			return s.delegateToTask(ctx, in, (*agent.ToolSet).ListFindingsTool)
 		})
 }
 
 func (s *Server) toolAddHint() actool.CoreTool {
-	return wrTool("add_task_hint", "给指定任务注入战略提示(该任务的 planner 下轮生成意图时会读到)。\n"+
-		"★优先批量：多条提示放进 hints 数组一次提交（返回 ids 数组，与 hints 等长同序，失败项 id=0）；单条则省略 hints 直接给顶层 text。",
+	return wrTool("add_task_hint", "Inject strategic guidance into a task so its planner reads it before creating the next intents. Prefer batch submission through the hints array; returned ids match the input order and failed entries have id=0. For one hint, omit hints and provide top-level text.",
 		objSchema(map[string]any{
-			"task_id":      strParam("任务 id"),
-			"hints":        map[string]any{"type": "array", "description": "【优先用这个】提示数组，每个元素字段同顶层（text/asset_ids/traffic_refs）。", "items": objSchema(map[string]any{"text": strParam("提示内容"), "asset_ids": map[string]any{"type": "array", "items": map[string]any{"type": "integer"}}, "traffic_refs": agent.HintTrafficSchema()})},
-			"text":         strParam("[单条] 提示内容"),
+			"task_id":      strParam("Task ID"),
+			"hints":        map[string]any{"type": "array", "description": "Preferred: hints array; each entry has the same fields as the top level (text/asset_ids/traffic_refs).", "items": objSchema(map[string]any{"text": strParam("Hint content"), "asset_ids": map[string]any{"type": "array", "items": map[string]any{"type": "integer"}}, "traffic_refs": agent.HintTrafficSchema()})},
+			"text":         strParam("[Single hint] Hint content"),
 			"traffic_refs": agent.HintTrafficSchema(),
-			"asset_ids":    map[string]any{"type": "array", "items": map[string]any{"type": "integer"}, "description": "锚定的资产 id（可选，0/1/多个；该任务内的资产 id）"},
+			"asset_ids":    map[string]any{"type": "array", "items": map[string]any{"type": "integer"}, "description": "Anchored asset IDs (optional: zero, one, or more asset IDs from this task)"},
 		}, "task_id"),
 		func(ctx context.Context, in json.RawMessage) (actool.Result, error) {
 			return s.delegateToTask(ctx, in, (*agent.ToolSet).AddHintTool)
@@ -598,11 +597,11 @@ func (s *Server) toolAddHint() actool.CoreTool {
 
 func (s *Server) toolGetWorkerTrace() actool.CoreTool {
 	return roTool("get_task_worker_trace",
-		"看指定任务里某个 work(意图)的执行过程：get_task_worker_trace(task_id, intent_id) 看步骤摘要；再带 step_ids=[...] 取那几步完整内容(一次最多 5 个,多传只返回前 5 个)。",
+		"Inspect a work intent in a task: get_task_worker_trace(task_id, intent_id) returns step summaries; add step_ids=[...] to retrieve full contents for up to 5 selected steps.",
 		objSchema(map[string]any{
-			"task_id":   strParam("任务 id"),
-			"intent_id": map[string]any{"type": "integer", "description": "意图 id(该任务里的 work)"},
-			"step_ids":  map[string]any{"type": "array", "items": map[string]any{"type": "integer"}, "description": "可选：要取完整内容的步骤 id(一次最多 5 个,多传只返回前 5 个,其余在 omitted_step_ids 里列出)"},
+			"task_id":   strParam("Task ID"),
+			"intent_id": map[string]any{"type": "integer", "description": "Intent ID (work in this task)"},
+			"step_ids":  map[string]any{"type": "array", "items": map[string]any{"type": "integer"}, "description": "Optional: step IDs for full content (maximum 5 per call; extra IDs are returned in omitted_step_ids)"},
 		}, "task_id", "intent_id"),
 		func(ctx context.Context, in json.RawMessage) (actool.Result, error) {
 			return s.delegateToTask(ctx, in, (*agent.ToolSet).GetWorkerTraceTool)
@@ -610,16 +609,16 @@ func (s *Server) toolGetWorkerTrace() actool.CoreTool {
 }
 
 func (s *Server) toolListWorkerTraces() actool.CoreTool {
-	return roTool("list_task_worker_traces", "列出指定任务里跑过哪些 work(意图) + 各自步数，用于发现哪些 work 值得翻看(再用 get_task_worker_trace)。",
-		objSchema(map[string]any{"task_id": strParam("任务 id")}, "task_id"),
+	return roTool("list_task_worker_traces", "List work intents that have run in a task and their step counts to identify traces worth inspecting with get_task_worker_trace.",
+		objSchema(map[string]any{"task_id": strParam("Task ID")}, "task_id"),
 		func(ctx context.Context, in json.RawMessage) (actool.Result, error) {
 			return s.delegateToTask(ctx, in, (*agent.ToolSet).ListWorkerTracesTool)
 		})
 }
 
 func (s *Server) toolSearchWorkerTraces() actool.CoreTool {
-	return roTool("search_task_worker_traces", "在指定任务里按关键字搜索所有 work 的执行过程(返回命中步骤摘要 + intent_id)。",
-		objSchema(map[string]any{"task_id": strParam("任务 id"), "q": strParam("搜索关键字")}, "task_id", "q"),
+	return roTool("search_task_worker_traces", "Search all work execution traces in a task by keyword, returning matching step summaries and intent_id values.",
+		objSchema(map[string]any{"task_id": strParam("Task ID"), "q": strParam("Search keyword")}, "task_id", "q"),
 		func(ctx context.Context, in json.RawMessage) (actool.Result, error) {
 			return s.delegateToTask(ctx, in, (*agent.ToolSet).SearchWorkerTracesTool)
 		})
@@ -627,10 +626,10 @@ func (s *Server) toolSearchWorkerTraces() actool.CoreTool {
 
 func (s *Server) toolGetTaskNodeDetail() actool.CoreTool {
 	return roTool("get_task_node_detail",
-		"读指定任务里某个探索图节点的完整内容(发现/事实/意图/目标：摘要 + 详情/证据/PoC)。id 为探索节点 id(如 report_finding 返回、或 list_task_findings 里的 id)。写漏洞报告前用它取该漏洞的完整证据。",
+		"Read a complete exploration node in a task (finding, fact, intent, or goal), including summary, details, evidence, and PoC. id is the exploration node ID returned by report_finding or list_task_findings, not an asset ID. Use it to retrieve complete finding evidence before writing a report.",
 		objSchema(map[string]any{
-			"task_id": strParam("任务 id"),
-			"id":      map[string]any{"type": "integer", "description": "探索图节点 id(非资产 id)"},
+			"task_id": strParam("Task ID"),
+			"id":      map[string]any{"type": "integer", "description": "Exploration node ID (not an asset ID)"},
 		}, "task_id", "id"),
 		func(ctx context.Context, in json.RawMessage) (actool.Result, error) {
 			return s.delegateToTask(ctx, in, (*agent.ToolSet).NodeDetailTool)
@@ -643,11 +642,11 @@ func (s *Server) toolGetTaskNodeDetail() actool.CoreTool {
 // task-agnostic, so this host tool needs no task_id / exploration store.
 func (s *Server) toolUpdateFindingReport() actool.CoreTool {
 	return wrTool("update_finding_report",
-		"为已登记的漏洞写入/更新【详细报告】(Markdown 全文,整段覆盖旧内容)。finding_id 传 report_finding 返回的那个 id(\"finding recorded: <id>\" 里的数字)。报告建议包含:漏洞概述、影响与危害、复现步骤、证据/PoC、修复建议。",
+		"Write or replace a registered finding's complete detailed Markdown report. finding_id is the ID returned by report_finding (the number in \"finding recorded: <id>\"). Recommended sections: overview, impact, reproduction steps, evidence/PoC, and remediation.",
 		objSchema(map[string]any{
-			"finding_id":       map[string]any{"type": "integer", "description": "目标漏洞 id(report_finding 返回的 id)"},
-			"report":           strParam("详细报告全文,Markdown 格式"),
-			"evidence_version": map[string]any{"type": "integer", "description": "get_finding_traffic 返回的证据 version；用于防止报告覆盖新的证据变更"},
+			"finding_id":       map[string]any{"type": "integer", "description": "Target finding ID (ID returned by report_finding)"},
+			"report":           strParam("Complete detailed report in Markdown"),
+			"evidence_version": map[string]any{"type": "integer", "description": "Evidence version returned by get_finding_traffic; prevents a report from overwriting newer evidence changes"},
 		}, "finding_id", "report"),
 		func(ctx context.Context, in json.RawMessage) (actool.Result, error) {
 			var a struct {
@@ -658,14 +657,14 @@ func (s *Server) toolUpdateFindingReport() actool.CoreTool {
 			_ = json.Unmarshal(in, &a)
 			nodeID := parseProfileID(a.FindingID) // 复用「数字或数字字符串」解析
 			if nodeID <= 0 {
-				return actool.Errorf("finding_id 无效"), nil
+				return actool.Errorf("Invalid finding_id"), nil
 			}
 			n, err := s.m.pg.SetFindingReportVersionByNodeID(ctx, nodeID, a.Report, a.EvidenceVersion)
 			if err != nil {
 				return actool.Errorf(err.Error()), nil
 			}
 			if n == 0 {
-				return actool.Errorf(fmt.Sprintf("未找到 finding_id=%d 对应的漏洞记录(先用 report_finding 登记)", nodeID)), nil
+				return actool.Errorf(fmt.Sprintf("No finding record for finding_id=%d (register it with report_finding first)", nodeID)), nil
 			}
 			return actool.Text(fmt.Sprintf("finding %d report updated (%d chars)", nodeID, len(a.Report))), nil
 		})
@@ -762,7 +761,7 @@ func (s *Server) refreshBuiltinToolSchemas() {
 		}
 	}
 	_ = s.m.pg.SetSetting(flag, "true")
-	log.Printf("[tools] 已刷新 orchestration/platform 工具 schema 到代码默认(一次性)")
+	log.Printf("[tools] refreshed orchestration/platform tool schemas to code defaults (one-time migration)")
 }
 
 // unbindGoalMetDefault removes goal_met's default "planner" binding ONCE (guarded by
@@ -776,7 +775,7 @@ func (s *Server) unbindGoalMetDefault() {
 		return
 	}
 	if err := s.m.pg.RemoveAgentFromTool("planner", "goal_met"); err != nil {
-		log.Printf("[tools] goal_met 解绑 planner 失败: %v", err)
+		log.Printf("[tools] failed to unbind goal_met from planner: %v", err)
 		return
 	}
 	_ = s.m.pg.SetSetting(flag, "true")
@@ -806,10 +805,10 @@ func (s *Server) reseedGoalsPrompt() {
 		return
 	}
 	if _, err := s.m.pg.ResetPromptToDefault(a.ID, tmpl); err != nil {
-		log.Printf("[prompts] goals 提示词重刷为新默认失败: %v", err)
+		log.Printf("[prompts] failed to refresh goals prompt to new default: %v", err)
 		return
 	}
-	log.Printf("[prompts] goals 提示词已追加新默认版本(加入抽操作约束步,一次性)")
+	log.Printf("[prompts] added new default goals prompt version (operational-constraint extraction; one-time migration)")
 }
 
 // reseedMainAgentPrompt 把 mainagent 提示词刷成【当前代码默认】——默认正文新增了「目标全部
@@ -836,10 +835,10 @@ func (s *Server) reseedMainAgentPrompt() {
 		return
 	}
 	if _, err := s.m.pg.ResetPromptToDefault(a.ID, tmpl); err != nil {
-		log.Printf("[prompts] mainagent 提示词重刷为新默认失败: %v", err)
+		log.Printf("[prompts] failed to refresh mainagent prompt to new default: %v", err)
 		return
 	}
-	log.Printf("[prompts] mainagent 提示词已追加新默认版本(加入目标达成后反问建目标,一次性)")
+	log.Printf("[prompts] added new default mainagent prompt version (offer to create goals after completion; one-time migration)")
 }
 
 // reseedPlannerPrompt 把 planner 提示词刷成【当前代码默认】——默认正文做了精简重构,并把「克制」降级为
@@ -867,10 +866,10 @@ func (s *Server) reseedPlannerPrompt() {
 		return
 	}
 	if _, err := s.m.pg.ResetPromptToDefault(a.ID, tmpl); err != nil {
-		log.Printf("[prompts] planner 提示词重刷为新默认失败: %v", err)
+		log.Printf("[prompts] failed to refresh planner prompt to new default: %v", err)
 		return
 	}
-	log.Printf("[prompts] planner 提示词已追加新默认版本(精简重构+克制降级去重+深度优先+否定复核上界,一次性)")
+	log.Printf("[prompts] added new default planner prompt version (simplification, restrained deduplication, depth first, bounded negative-result review; one-time migration)")
 }
 
 // reseedWorkerPrompt 把 worker 提示词刷成【当前代码默认】——v6 在 v5（中性化重写）基础上
@@ -897,10 +896,10 @@ func (s *Server) reseedWorkerPrompt() {
 		return
 	}
 	if _, err := s.m.pg.ResetPromptToDefault(a.ID, tmpl); err != nil {
-		log.Printf("[prompts] worker 提示词重刷为新默认失败: %v", err)
+		log.Printf("[prompts] failed to refresh worker prompt to new default: %v", err)
 		return
 	}
-	log.Printf("[prompts] worker 提示词已追加新默认版本(v6:vulnclass 归类规范+严重档证据门槛,一次性)")
+	log.Printf("[prompts] added new default worker prompt version (v6: vulnerability classification and evidence thresholds for severe findings; one-time migration)")
 }
 
 // reporterToolCallMessage 必须无条件要求先读一次 get_finding_traffic 再写报告。
@@ -908,11 +907,11 @@ func (s *Server) reseedWorkerPrompt() {
 // 写成「启用自动绑定才读」,默认关闭配置下 reporter 就不会传 evidence_version,
 // SetFindingReportVersionByNodeID 便按 legacy 语义写 -1,漏洞详情与 Markdown 导出
 // 从此常驻「证据已变更，报告待更新」,而 UI 上没有任何入口能把它清掉。
-const reporterToolCallMessage = "上面刚有一个漏洞被 report_finding 登记。请读取返回 JSON 的 finding_id（独立漏洞记录 ID）与 finding_node_id（探索节点 ID），" +
-	"先用 get_finding_traffic(finding_id) 读取当前证据清单及其 version（空清单是正常情况，照常写报告）；" +
-	"若运行指引启用自动绑定，在读取前先核实并关联本次漏洞的流量。节点详情使用 finding_node_id。" +
-	"最后调用 update_finding_report(finding_id=finding_node_id, report, evidence_version=实际读取版本) 保存，" +
-	"evidence_version 必须传，否则报告会被永久标记为待更新。不要混用两种编号。"
+const reporterToolCallMessage = "A finding was just registered by report_finding. Read finding_id (independent finding record ID) and finding_node_id (exploration node ID) from the returned JSON." +
+	"First call get_finding_traffic(finding_id) to read the current evidence list and version (an empty list is normal; still write the report)." +
+	"If runtime guidance enables automatic binding, verify and link this finding's traffic before reading. Use finding_node_id for node details." +
+	"Finally call update_finding_report(finding_id=finding_node_id, report, evidence_version=the version actually read) to save." +
+	"evidence_version is required; otherwise the report is permanently marked as needing an update. Do not mix up the two ID types."
 
 // 旧版触发消息(0.3.8 及更早)。只有仍与它逐字相同的记录才会被迁移覆盖，用户改过的保持原样。
 const reporterToolCallMessageV1 = "上面刚有一个漏洞被 report_finding 登记。请从触发上下文里取出 finding_id" +
@@ -931,7 +930,7 @@ func (s *Server) upgradeReporterTriggerMessage() {
 	defer func() { _ = s.m.pg.SetSetting(flag, "true") }() // 只尝试一次
 	triggers, err := s.m.pg.ListTriggersFor("reporter")
 	if err != nil {
-		log.Printf("[reporter] 读取触发器失败: %v", err)
+		log.Printf("[reporter] failed to read triggers: %v", err)
 		return
 	}
 	for _, t := range triggers {
@@ -940,33 +939,33 @@ func (s *Server) upgradeReporterTriggerMessage() {
 		}
 		t.ToolCallMessage = reporterToolCallMessage
 		if err := s.m.pg.UpdateTrigger(t); err != nil {
-			log.Printf("[reporter] 升级触发消息失败: %v", err)
+			log.Printf("[reporter] failed to upgrade trigger message: %v", err)
 			return
 		}
-		log.Printf("[reporter] 触发消息已升级为读取并回传 evidence_version")
+		log.Printf("[reporter] trigger message upgraded to read and return evidence_version")
 	}
 }
 
-const vulnDispatcherDescription = "由 planner 确认 finding 满足当前 execution mode 的处置前提后显式调用：执行约束检查、资产去重，并按漏洞类型派发或追加内网渗透子任务。"
+const vulnDispatcherDescription = "Explicitly invoked after the Planner confirms the finding satisfies current execution-mode prerequisites: check constraints, deduplicate by asset, then dispatch or append an internal penetration testing subtask according to the finding."
 
 const vulnDispatcherDescriptionV1 = "严重档立足点漏洞(getshell/rce/file_upload/deserialization × critical/high)自动派发深度子任务：finding 触发→约束检查→判定→去重→按 vulnclass/漏洞描述选场景模板 spawn_task。"
 
-const vulnDispatcherFindingMessagePrefix = "Planner 已确认以下 finding 需要评估后续处置：[vulnclass=__VULNCLASS__/severity=__SEVERITY__] __SUMMARY__。先读显式派发上下文的 execution_mode：" +
-	"foothold 或缺失时，仅 vulnclass ∈ {getshell,webshell,reverse_shell} 且 severity ∈ {critical,high}，并有 WebShell 可连接、交互命令回显或 C2/反弹会话上线证据才评估派发；" +
-	"vulnerability_only 时，vulnclass ∈ {rce,file_upload,deserialization,privesc,获取目标权限} 且 severity ∈ {critical,high}、已有可复现确认证据，可评估派发内网渗透子任务，不要求立足点。"
+const vulnDispatcherFindingMessagePrefix = "The Planner confirmed this finding needs follow-up assessment: [vulnclass=__VULNCLASS__/severity=__SEVERITY__] __SUMMARY__. First read execution_mode from the explicit dispatch context:" +
+	"For foothold or missing mode, assess dispatch only for getshell/webshell/reverse_shell with critical/high severity and evidence of a connectable WebShell, actual interactive command output, or an online C2/reverse session;" +
+	"For vulnerability_only, reproducible confirmed rce/file_upload/deserialization/privesc/target_access with critical/high severity can justify an internal penetration testing subtask without a foothold."
 
 // vulnDispatcherFindingMessageUnrestricted 仅用于识别回滚前的系统默认触发消息。
 const vulnDispatcherFindingMessageUnrestricted = vulnDispatcherFindingMessagePrefix +
-	"其他漏洞档不派。派发前按提示词查父任务图去重。"
+	"Do not dispatch other classes. Check parent-task context for deduplication as instructed."
 
 // vulnDispatcherFindingMessage 保存显式派发时使用的消息模板；OnFinding 已默认关闭。
 const vulnDispatcherFindingMessage = vulnDispatcherFindingMessagePrefix +
-	"其他漏洞档不派。派发前必须用 list_task_constraints 查父任务约束（goal/deny 明确禁止方向不派），再按提示词查父任务图去重。"
+	"Do not dispatch other classes. Read parent constraints with list_task_constraints first (never derive directions explicitly forbidden by goal/deny), then deduplicate using parent-task context as instructed."
 
-const vulnDispatcherFindingMessageV2 = "新漏洞：[vulnclass=__VULNCLASS__/severity=__SEVERITY__] __SUMMARY__。先读触发上下文的 execution_mode：" +
-	"foothold 或缺失时，仅 vulnclass ∈ {getshell,webshell,reverse_shell} 且 severity ∈ {critical,high}，并有 WebShell 可连接、交互命令回显或 C2/反弹会话上线证据才评估派发；" +
-	"vulnerability_only 时，vulnclass ∈ {rce,file_upload,deserialization,privesc,获取目标权限} 且 severity ∈ {critical,high}、已有可复现确认证据，可评估派发内网渗透子任务，不要求立足点。" +
-	"其他漏洞档不派。派发前按提示词查父任务图去重。"
+const vulnDispatcherFindingMessageV2 = "New finding: [vulnclass=__VULNCLASS__/severity=__SEVERITY__] __SUMMARY__. First read execution_mode from trigger context:" +
+	"For foothold or missing mode, assess dispatch only for getshell/webshell/reverse_shell with critical/high severity and evidence of a connectable WebShell, actual interactive command output, or an online C2/reverse session;" +
+	"For vulnerability_only, reproducible confirmed rce/file_upload/deserialization/privesc/target_access with critical/high severity can justify an internal penetration testing subtask without a foothold." +
+	"Do not dispatch other classes. Check parent-task context for deduplication as instructed."
 
 // vulnDispatcherFindingMessageV1 旧版触发消息（仅「内网渗透」单场景）。只有仍与它逐字相同的
 // 触发器记录才会被 upgradeVulnDispatcherV2 迁移覆盖，用户改过的保持原样。
@@ -988,23 +987,23 @@ func (s *Server) seedVulnDispatcherAgent() {
 	if exist, _ := s.m.pg.GetAgentByKey("vuln_dispatcher"); exist != nil {
 		return // key 已被占用(用户手建过)——不覆盖
 	}
-	a, err := s.m.pg.CreateAgent("vuln_dispatcher", "漏洞派发", vulnDispatcherDescription)
+	a, err := s.m.pg.CreateAgent("vuln_dispatcher", "Finding Dispatcher", vulnDispatcherDescription)
 	if err != nil {
-		log.Printf("[vuln_dispatcher] 创建 agent 失败: %v", err)
+		log.Printf("[vuln_dispatcher] failed to create agent: %v", err)
 		return
 	}
 	prompt := s.resolveVulnDispatcherPrompt(agent.VulnDispatcherDefaultPrompt)
 	if err := s.m.pg.SeedPromptIfEmpty(a.ID, prompt); err != nil {
-		log.Printf("[vuln_dispatcher] seed prompt 失败: %v", err)
+		log.Printf("[vuln_dispatcher] failed to seed prompt: %v", err)
 	}
 	if err := s.m.pg.SetAgentTriggerBehavior("vuln_dispatcher", "serial", "by_task", 0); err != nil {
-		log.Printf("[vuln_dispatcher] 设置触发运行策略失败: %v", err)
+		log.Printf("[vuln_dispatcher] failed to set trigger execution policy: %v", err)
 	}
 	// 最小工具面：只读 + 新建子任务 + 向同血缘运行中内网子任务补充 Finding。
 	if err := s.m.pg.AddAgentToToolBinding("vuln_dispatcher", []string{
 		"spawn_task", "check_internal_asset_task", "append_finding_to_task", "list_llm_profiles", "get_task_node_detail", "list_task_findings", "get_task_graph", "list_task_constraints",
 	}); err != nil {
-		log.Printf("[vuln_dispatcher] 绑定工具失败: %v", err)
+		log.Printf("[vuln_dispatcher] failed to bind tools: %v", err)
 	}
 	if _, err := s.m.pg.CreateTrigger(&db.AgentTrigger{
 		AgentKey:       "vuln_dispatcher",
@@ -1012,9 +1011,9 @@ func (s *Server) seedVulnDispatcherAgent() {
 		OnFinding:      false,
 		FindingMessage: vulnDispatcherFindingMessage,
 	}); err != nil {
-		log.Printf("[vuln_dispatcher] 创建触发器失败: %v", err)
+		log.Printf("[vuln_dispatcher] failed to create trigger: %v", err)
 	}
-	log.Printf("[vuln_dispatcher] 已预置「漏洞派发」agent + finding 触发器")
+	log.Printf("[vuln_dispatcher] preconfigured Finding Dispatcher agent and finding trigger")
 }
 
 // vulnDispatcherLegacyTemplateRefs 只用于兼容旧默认提示词；新提示词直接保存稳定 nkey。
@@ -1029,7 +1028,7 @@ var vulnDispatcherLegacyTemplateRefs = map[string]string{
 func (s *Server) resolveVulnDispatcherPrompt(tmpl string) string {
 	prompt := tmpl
 	for key, placeholder := range vulnDispatcherLegacyTemplateRefs {
-		prompt = strings.ReplaceAll(prompt, "planner_template_id="+placeholder, "planner_template_nkey="+key)
+		prompt = strings.ReplaceAll(prompt, "planner_template_id="+placeholder, "planner_template_nkey="+scenarioReference(key))
 	}
 	return prompt
 }
@@ -1044,7 +1043,7 @@ func (s *Server) upgradeVulnDispatcherV2() {
 	// 工具绑定必须独立于一次性提示词升级 flag：存量库即使早已完成 V4，
 	// 仍需获得后续新增的运行中子任务 Finding 追加能力。
 	if err := s.m.pg.AddAgentToToolBinding("vuln_dispatcher", []string{"list_task_constraints", "check_internal_asset_task", "append_finding_to_task"}); err != nil {
-		log.Printf("[vuln_dispatcher] 绑定只读约束/Finding 追加工具失败: %v", err)
+		log.Printf("[vuln_dispatcher] failed to bind read-only constraints/Finding append tools: %v", err)
 	}
 	const flag = "vuln_dispatcher_v4_review_by_human"
 	if v, _, _ := s.m.pg.GetSetting(flag); v == "true" {
@@ -1061,12 +1060,12 @@ func (s *Server) upgradeVulnDispatcherV2() {
 			// 已是 v4 血统（审核由人决定版）
 		case strings.Contains(cur, "漏洞派发 agent"):
 			if _, uerr := s.m.pg.ResetPromptToDefault(a.ID, s.resolveVulnDispatcherPrompt(agent.VulnDispatcherDefaultPrompt)); uerr != nil {
-				log.Printf("[vuln_dispatcher] 提示词升级 v3 失败: %v", uerr)
+				log.Printf("[vuln_dispatcher] prompt v3 upgrade failed: %v", uerr)
 			} else {
-				log.Printf("[vuln_dispatcher] 提示词已升级 v4（操作约束检查 + 五场景模板映射；审核开关由人决定=纯继承，一次性）")
+				log.Printf("[vuln_dispatcher] prompt upgraded to v4 (operational constraint checks, five-scenario template mapping, human-controlled inherited review setting; one-time migration)")
 			}
 		default:
-			log.Printf("[vuln_dispatcher] 提示词被用户修改过，跳过 v2 升级（可在 agent 页手动「恢复默认」）")
+			log.Printf("[vuln_dispatcher] user-modified prompt; skipping v2 upgrade (use Restore defaults on the agent page to reset)")
 		}
 	}
 	if triggers, terr := s.m.pg.ListTriggersFor("vuln_dispatcher"); terr == nil {
@@ -1076,9 +1075,9 @@ func (s *Server) upgradeVulnDispatcherV2() {
 			}
 			tg.FindingMessage = vulnDispatcherFindingMessage
 			if uerr := s.m.pg.UpdateTrigger(tg); uerr != nil {
-				log.Printf("[vuln_dispatcher] 升级触发消息失败: %v", uerr)
+				log.Printf("[vuln_dispatcher] failed to upgrade trigger message: %v", uerr)
 			} else {
-				log.Printf("[vuln_dispatcher] 触发消息已升级 v2")
+				log.Printf("[vuln_dispatcher] trigger message upgraded to v2")
 			}
 		}
 	}
@@ -1108,12 +1107,12 @@ func (s *Server) upgradeVulnDispatcherV5() {
 		// 已是 v5 血统
 	case strings.Contains(cur, "审核开关由人决定"):
 		if _, uerr := s.m.pg.ResetPromptToDefault(a.ID, s.resolveVulnDispatcherPrompt(agent.VulnDispatcherDefaultPrompt)); uerr != nil {
-			log.Printf("[vuln_dispatcher] 提示词升级 v5 失败: %v", uerr)
+			log.Printf("[vuln_dispatcher] prompt v5 upgrade failed: %v", uerr)
 		} else {
-			log.Printf("[vuln_dispatcher] 提示词已升级 v5（同资产去重强化：资产为键、跨运行查任务图、同资产 finding 合并派发）")
+			log.Printf("[vuln_dispatcher] prompt upgraded to v5 (asset-based deduplication, cross-run task-graph checks, combined dispatch for findings on the same asset)")
 		}
 	default:
-		log.Printf("[vuln_dispatcher] 提示词被用户修改过，跳过 v5 升级（可在 agent 页手动「恢复默认」）")
+		log.Printf("[vuln_dispatcher] user-modified prompt; skipping v5 upgrade (use Restore defaults on the agent page to reset)")
 	}
 }
 
@@ -1134,14 +1133,14 @@ func (s *Server) upgradeVulnDispatcherNKey() {
 		return
 	}
 	if !strings.Contains(cur, "漏洞派发 agent") || !strings.Contains(cur, "审核开关由人决定") || !strings.Contains(cur, "去重的键是") {
-		log.Printf("[vuln_dispatcher] 提示词含自定义修改，跳过 nkey 自动迁移")
+		log.Printf("[vuln_dispatcher] prompt contains custom changes; skipping automatic nkey migration")
 		return
 	}
 	if _, err := s.m.pg.ResetPromptToDefault(a.ID, agent.VulnDispatcherDefaultPrompt); err != nil {
-		log.Printf("[vuln_dispatcher] nkey 提示词迁移失败: %v", err)
+		log.Printf("[vuln_dispatcher] nkey prompt migration failed: %v", err)
 		return
 	}
-	log.Printf("[vuln_dispatcher] 场景模板已迁移到稳定 nkey")
+	log.Printf("[vuln_dispatcher] scenario templates migrated to stable nkeys")
 }
 
 // seedReporterAgent 预置一个「报告撰写」自定义 agent(builtin=false，可在 UI 编辑/删除)：
@@ -1158,20 +1157,20 @@ func (s *Server) seedReporterAgent() {
 	if exist, _ := s.m.pg.GetAgentByKey("reporter"); exist != nil {
 		return // key 已被占用(用户手建过)——不覆盖
 	}
-	a, err := s.m.pg.CreateAgent("reporter", "报告撰写",
-		"漏洞详细报告撰写：发现漏洞时自动触发，查取证据与执行过程后写 Markdown 报告并回写。")
+	a, err := s.m.pg.CreateAgent("reporter", "Report Writer",
+		"Detailed finding reports: triggered automatically when a finding is discovered; retrieves evidence and execution traces, writes a Markdown report, and saves it back.")
 	if err != nil {
-		log.Printf("[reporter] 创建 agent 失败: %v", err)
+		log.Printf("[reporter] failed to create agent: %v", err)
 		return
 	}
 	if err := s.m.pg.SeedPromptIfEmpty(a.ID, agent.ReporterDefaultPrompt); err != nil {
-		log.Printf("[reporter] seed prompt 失败: %v", err)
+		log.Printf("[reporter] failed to seed prompt: %v", err)
 	}
 	// 触发运行策略：parallel + none —— 一漏洞一报告、多个 finding 并发各写各的。
 	// merge 必须为 none：否则(默认 all)一波 finding 会被合并成一次运行，并行就没意义。
 	// maxParallel=5：同时最多 5 个报告会话，避免瞬时太多 LLM 调用。
 	if err := s.m.pg.SetAgentTriggerBehavior("reporter", "parallel", "none", 5); err != nil {
-		log.Printf("[reporter] 设置触发运行策略失败: %v", err)
+		log.Printf("[reporter] failed to set trigger execution policy: %v", err)
 	}
 	// 绑定它需要的工具：写报告 + 读证据/执行过程/态势。
 	if err := s.m.pg.AddAgentToToolBinding("reporter", []string{
@@ -1179,7 +1178,7 @@ func (s *Server) seedReporterAgent() {
 		"get_task_worker_trace", "list_task_worker_traces", "search_task_worker_traces",
 		"get_task_graph",
 	}); err != nil {
-		log.Printf("[reporter] 绑定工具失败: %v", err)
+		log.Printf("[reporter] failed to bind tools: %v", err)
 	}
 	// 触发器：report_finding 被调用即触发（工具返回 "finding recorded: <id>" 带上 finding_id，
 	// 任务 id 也在触发消息里）。
@@ -1190,9 +1189,9 @@ func (s *Server) seedReporterAgent() {
 		ToolNames:       []string{"report_finding"},
 		ToolCallMessage: reporterToolCallMessage,
 	}); err != nil {
-		log.Printf("[reporter] 创建触发器失败: %v", err)
+		log.Printf("[reporter] failed to create trigger: %v", err)
 	}
-	log.Printf("[reporter] 已预置「报告撰写」agent + finding 触发器")
+	log.Printf("[reporter] preconfigured Report Writer agent and finding trigger")
 }
 
 // seedAutoReportFindingBinding adds "auto" to report_finding's binding ONCE so
@@ -1203,7 +1202,7 @@ func (s *Server) seedAutoReportFindingBinding() {
 		return
 	}
 	if err := s.m.pg.AddAgentToToolBinding("auto", []string{"report_finding"}); err != nil {
-		log.Printf("[auto] report_finding 默认绑定失败: %v", err)
+		log.Printf("[auto] failed to bind report_finding by default: %v", err)
 		return
 	}
 	_ = s.m.pg.SetSetting(flag, "true")
@@ -1219,7 +1218,7 @@ func (s *Server) seedPlannerDefaultBindings() {
 		return
 	}
 	if err := s.m.pg.AddAgentToToolBinding("planner", []string{"report_finding"}); err != nil {
-		log.Printf("[planner] report_finding 默认绑定失败: %v", err)
+		log.Printf("[planner] failed to bind report_finding by default: %v", err)
 		return
 	}
 	_ = s.m.pg.SetSetting(flag, "true")
@@ -1236,7 +1235,7 @@ func (s *Server) seedPlannerListAssetsBinding() {
 		return
 	}
 	if err := s.m.pg.AddAgentToToolBinding("planner", []string{"list_assets"}); err != nil {
-		log.Printf("[planner] list_assets 默认绑定失败: %v", err)
+		log.Printf("[planner] failed to bind list_assets by default: %v", err)
 		return
 	}
 	_ = s.m.pg.SetSetting(flag, "true")
@@ -1254,11 +1253,11 @@ func (s *Server) seedCompanyScopeRebind() {
 		return
 	}
 	if err := s.m.pg.AddAgentToToolBinding("planner", []string{"add_company_scope"}); err != nil {
-		log.Printf("[planner] add_company_scope 默认绑定失败: %v", err)
+		log.Printf("[planner] failed to bind add_company_scope by default: %v", err)
 		return
 	}
 	if err := s.m.pg.RemoveAgentFromTool("worker", "add_company_scope"); err != nil {
-		log.Printf("[worker] add_company_scope 解绑失败: %v", err)
+		log.Printf("[worker] failed to unbind add_company_scope: %v", err)
 		return
 	}
 	_ = s.m.pg.SetSetting(flag, "true")
@@ -1285,7 +1284,7 @@ func (s *Server) seedWorkerReadToolsUnbind() {
 		"list_facts", "list_companies", "list_worker_traces",
 	} {
 		if err := s.m.pg.RemoveAgentFromTool("worker", k); err != nil {
-			log.Printf("[worker] %s 从 worker 解绑失败: %v", k, err)
+			log.Printf("[worker] failed to unbind %s from worker: %v", k, err)
 			return // 出错则不落 flag，下次启动重试
 		}
 	}
@@ -1306,7 +1305,7 @@ func (s *Server) seedWorkerReadbackRebind() {
 	if err := s.m.pg.AddAgentToToolBinding("worker", []string{
 		"search_all_worker_traces", "get_worker_trace", "node_detail",
 	}); err != nil {
-		log.Printf("[worker] 回看/详情工具补绑失败: %v", err)
+		log.Printf("[worker] failed to bind history/detail tools: %v", err)
 		return // 出错则不落 flag，下次启动重试
 	}
 	_ = s.m.pg.SetSetting(flag, "true")
@@ -1332,7 +1331,7 @@ func (s *Server) seedAutoDefaultBindings() {
 	// 资产工具：Auto 操作平台常要看/登记资产、管理公司范围。
 	keys = append(keys, "insert_assets", "add_company_scope", "list_assets")
 	if err := s.m.pg.AddAgentToToolBinding("auto", keys); err != nil {
-		log.Printf("[auto] 默认绑定失败: %v", err)
+		log.Printf("[auto] default binding failed: %v", err)
 		return
 	}
 	_ = s.m.pg.SetSetting(flag, "true")
@@ -1401,7 +1400,7 @@ func (s *Server) matchForbiddenConstraint(parentRef, childGoal string) string {
 func (s *Server) executorKeyList() string {
 	agents, err := s.m.PG().ListAgents()
 	if err != nil {
-		return "(清单读取失败)"
+		return "(Failed to read list)"
 	}
 	var keys []string
 	for _, a := range agents {
@@ -1410,7 +1409,7 @@ func (s *Server) executorKeyList() string {
 		}
 	}
 	if len(keys) == 0 {
-		return "(无；请先在 agents 页给自定义 agent 声明 executor_key)"
+		return "(None; declare executor_key for a custom agent on the Agents page first)"
 	}
 	return strings.Join(keys, ", ")
 }
@@ -1419,14 +1418,14 @@ func (s *Server) executorKeyList() string {
 func (s *Server) plannerTemplateList() string {
 	tpls, err := s.m.PG().ListPlannerTemplates()
 	if err != nil {
-		return "(清单读取失败)"
+		return "(Failed to read list)"
 	}
 	if len(tpls) == 0 {
-		return "(模板库为空)"
+		return "(Template library is empty)"
 	}
 	var items []string
 	for _, t := range tpls {
-		items = append(items, fmt.Sprintf("#%d=%s", t.ID, t.Name))
+		items = append(items, fmt.Sprintf("#%d=%s", t.ID, localizeScenarioName(t.Name)))
 	}
 	return strings.Join(items, ", ")
 }

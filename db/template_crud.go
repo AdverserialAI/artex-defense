@@ -137,6 +137,9 @@ func getTemplateRow(d *DB, table string, id int64) (*templateRowData, error) {
 func getTemplateRowByNKey(d *DB, table, nkey string) (*templateRowData, error) {
 	t, err := scanTemplateRow(d.QueryRow(`SELECT `+templateCols+` FROM `+table+` WHERE nkey=$1`, nkey))
 	if err == sql.ErrNoRows {
+		if legacy := scenarioLegacyKey(nkey); legacy != nkey {
+			return getTemplateRowByNKey(d, table, legacy)
+		}
 		return nil, nil
 	}
 	if err != nil {

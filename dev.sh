@@ -23,5 +23,5 @@ backend_pid=$!
 ( cd web && npm run dev ) &
 frontend_pid=$!
 
-echo "[dev] 后端 :8787 / 代理 :8788 / 前端 http://localhost:3000  (Ctrl-C 退出)"
+echo "[dev] Backend :8787 / Proxy :8788 / Frontend http://localhost:3000 (Ctrl-C to exit)"
 wait

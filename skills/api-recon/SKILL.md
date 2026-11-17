@@ -1,200 +1,162 @@
 ---
 name: api-recon
-description: 收集网站API接口时调用该skill。
+description: Discover a website's API endpoints and parameters.
 ---
 
-# API Recon（前端接口侦察）
+# API Recon: frontend endpoint reconnaissance
 
-在**已授权**前提下，尽可能完整地发现：**后端 API**（路径、方法、参数、响应体）、**前端路由**、**UI 功能触发点**（Tab、弹窗、表格操作等）。
+Within authorized scope, discover backend API paths/methods/parameters/responses, frontend routes, and UI triggers such as tabs, dialogs, and table actions as completely as possible.
 
----
+## Boundaries and prohibitions
 
-## 边界与禁止（Agent 必读 · 违反即越界）
+This skill performs API/parameter reconnaissance only, not vulnerability discovery or exploitation.
 
-本 skill **仅做 API / 参数面侦察**，不是漏洞挖掘或渗透利用阶段。
+| Area | Allowed | Prohibited |
+| --- | --- | --- |
+| Goal | Enumerate paths, methods, parameters, routes, UI triggers | SQLi/XSS/access-control attacks, brute force, vulnerability fuzzing, attack request modification, destruction |
+| Authentication | Hook and stub/mock client-side login gates | Asking for/guessing credentials or submitting real login forms |
+| Runtime | Hook APIs without credentials and use mock responses to render the post-login SPA shell | Workflows requiring a genuine backend session |
 
-### 任务边界
+### Credential-free dynamic analysis: Phase 3 default
 
-| 范围 | 允许 | 禁止 |
-|---|---|---|
-| **目标** | 枚举 path、method、参数、路由、UI 触发点 | SQLi/XSS/越权/爆破/fuzz 漏洞、改包攻击、破坏性操作 |
-| **鉴权** | Hook + stub/mock 绕过**客户端**登录门 | 向用户索要或猜测账号密码；尝试真实登录表单提交 |
-| **运行时** | 无凭据下 hook 接口，用 mock 响应让 SPA 进入登录后壳层 | 依赖真实后端会话才能继续的流程 |
+1. Intercept/stub login, permission, menu, and other bootstrap APIs using `preload.js` / `runtime_harvest.js`.
+2. Return structurally correct mock bodies with successful business codes; data may be empty.
+3. Render post-login pages even with no backend or HTTP 401, exposing further XHR/fetch/WebSocket calls.
+4. Empty data/tables and placeholder UI are expected. Do not switch to real login or vulnerability testing to fill them.
 
-### 无凭据动态分析（Phase 3 默认）
+Use mocks to expand route/component rendering and record outbound requests. The important question is which endpoints the frontend attempts to call, not the backend's real data.
 
-1. 通过 `preload.js` / `runtime_harvest.js` **拦截并 stub** 登录、权限、菜单等 bootstrap 接口；
-2. 对业务查询接口返回 **结构正确、业务码成功、数据可为空** 的 mock body；
-3. 使前端在无后端或 401 环境下仍能渲染登录后页面，从而触发更多 XHR/fetch/WebSocket；
-4. **空数据、空白表格、占位 UI 均属预期**——勿为此转向真实登录或漏洞测试。
+### Workflow prohibitions
 
-**一句话**：用 mock 撑开前端路由与组件挂载，**只录 outbound 请求**；后端返回什么不重要，重要的是前端**还会发哪些接口**。
+| Prohibited | Required alternative |
+| --- | --- |
+| grep/curl/Read of the main `index-*.js` entry for API extraction before Phase 1 completes | Run `OUTDIR/harvest_static.py` |
+| Writing `extract_apis.py` or another replacement extraction script | Modify and rerun `OUTDIR/harvest_static.py` |
+| Repeating the same failed grep/command at least twice | Inspect tool_logs, modify harvest, or consult reference |
+| Skipping gates A/B and running original `scripts/` as final tools | Copy to OUTDIR and adapt to the target |
+| Real credentials, OTP, OAuth authentication | Stub/mock |
+| Skipping stubs to obtain real data through access-control/injection testing | Record outbound requests only |
+| Irreversible deletion, sensitive-data exports, or bulk writes | Avoid these even during coverage clicking |
+| Claiming complete pages/APIs without runtime and dynamic enumeration | Meet completion criteria or report limitations |
+| Claiming complete parameters without trigger matrix and diff | Phase 3b matrix and Phase 5 diff |
+| Inferring required/optional from one runtime sample | Multiple-sample diff or validation/error evidence |
 
-### 流程硬禁止
+## Two layers and runtime modes
 
-| 禁止 | 替代做法 |
-|---|---|
-| Phase 1 完成前 grep/curl/Read 主 entry `index-*.js` 提取 API path | 跑 `OUTDIR/harvest_static.py` |
-| 手写 `extract_apis.py` 等替代 harvest 的脚本 | 改 `OUTDIR/harvest_static.py` 后重跑 |
-| 同一 grep/命令失败 ≥2 次仍重复 | 换策略：读 tool_logs、改 harvest、查 reference |
-| 跳过门禁 A/B，直接跑 `scripts/` 原版 | 复制到 OUTDIR 并按目标改 |
-| 真实用户名/密码、OTP、OAuth 等鉴权 | stub/mock（见上文） |
-| 以「拿真实数据」为由跳过 stub，做越权/注入测试 | 只录 outbound，属 recon 边界 |
-| 删除、导出敏感数据、批量写等不可逆操作 | coverage 点击亦同 |
-| 未完成 runtime + 动态枚举，声称已获全部页面和接口 | 见「完成定义」或标注局限 |
-| 未完成参数触发矩阵 + diff，声称已掌握全部参数 | Phase 3b 矩阵 + Phase 5 diff |
-| 用单一 runtime 样本推断必填/可选 | 多样本 diff 或校验规则/错误反推 |
+| Layer | Output | Limits |
+| --- | --- | --- |
+| Static JS bundles | Endpoint paths, draft routes, candidate payload fields | No reliable HTTP method; parameters need Phase 1b; dynamic URL construction can be missed |
+| Runtime | Methods, bodies, responses, dynamic URLs, WS/SSE, multi-sample parameter evidence | Pages must actually render; one sample cannot establish required/optional fields |
 
----
+| Mode | Engine | Purpose |
+| --- | --- | --- |
+| `depth` | Puppeteer `runtime_harvest.js` | Reproducible batch API/method/parameter/response/WS/SSE collection |
+| `coverage` | Browser + `preload.js` | Deeper functional coverage by clicking tabs/dialogs/tables |
+| `both` | Depth, then coverage | Most complete, with the highest time cost |
 
-## 两层模型 + 运行模式
+Parameter methodology has no universal script: paths use harvest/regex; parameters require anchored context windows, UI binding chains, multi-sample diffs, and error-based inference. See [reference.md](reference.md), section J.
 
-| 层 | 产出 | 上限 |
-|---|---|---|
-| **静态**（JS bundle） | 全量 endpoint 路径、路由草案、组包点字段候选 | 无 HTTP 方法；参数须 Phase 1b；漏掉运行时拼接 URL |
-| **运行时**（活会话） | 方法 + body + 响应 + 动态 URL + WS/SSE；多样本 diff 补全参数 | 页面须实际渲染才会发请求；单样本不足以定必填/可选 |
+## Completion criteria
 
-| 运行模式 | 引擎 | 适用 |
-|---|---|---|
-| **depth** | `runtime_harvest.js`（Puppeteer） | API 清单、METHOD/params/响应体、WS/SSE、可复现批量跑 |
-| **coverage** | browser + `preload.js` | 点 Tab/弹窗/表格，功能点覆盖更深 |
-| **both** | 先 depth 再 coverage | 最完整，耗时最长 |
+Claim completion only when all applicable items are satisfied:
 
-**参数方法论**（无通用脚本）：path 用 harvest/正则；参数用 **锚点扩窗 + UI 绑定链 + 多样本 diff + 错误反推**（grep 配方见 [reference.md](reference.md) J 节）。
+- [ ] Static harvest produced `api_static.txt`, `routes.txt`, and `js/`.
+- [ ] At least depth or coverage ran; coverage/both require active hooks and the dynamic enumeration loop.
+- [ ] Business paths render without returning to `/login`; account for hash routing.
+- [ ] Coverage/both completed the parameter trigger matrix and `param_samples.json`; Phase 5 produced `params_merged.json`.
+- [ ] If modules were blank, Phase 4 restored permissions and Phase 3 was rerun until module-level APIs appeared, not just locale/bootstrap calls.
+- [ ] All Phase 5 outputs exist and `insert_assets` registered every discovered service and API endpoint. Do not omit discovered assets.
 
----
+## Scripts and gates
 
-## 完成定义
+`scripts/` contains reference templates. Never run originals unchanged and treat their output as final.
 
-全部满足方可声称 recon 完成：
+Read → adapt → save in OUTDIR (for example `recon/`) → document changes in `CHANGES.md`. Rewrite target-specific logic when needed while reusing the structure.
 
-- [ ] **静态**：Phase 1 harvest 产出 `api_static.txt`、`routes.txt`、`js/`
-- [ ] **运行时**：至少 depth 或 coverage 之一；coverage/both 须 **Hook 生效 + 动态枚举环**
-- [ ] **进壳**：访问业务 path 时非 `/login`（注意 hash 路由）
-- [ ] **参数**：coverage/both 完成参数触发矩阵 + `param_samples.json`；Phase 5 合并 `params_merged.json`
-- [ ] **深度**（若模块页空白）：Phase 4 权限树还原并重跑，直至出现 **module 级 API**（非仅 locale/bootstrap）
-- [ ] **交付**：Phase 5 产出齐全（见 Phase 5 产出表）；`insert_assets` 写入服务与端点资产
+| Gate | When | Copy into OUTDIR | Typical adaptations |
+| --- | --- | --- | --- |
+| A: static | After Phase 0, before the first harvest/spider | `harvest_static.py` / `spider_mpa.py` | Default regex works for most sites; adjust only for mismatched manifests/dialects, endpoint regex, webpack/Vite publicPath, MPA excludes/cookies |
+| B: runtime | After Phase 2, before depth/coverage | `runtime_harvest.js` / `preload.js` + `config.json` | Storage/cookie keys, successful neutralize values, stubs, login regex, API prefixes, hash/history routing |
 
----
+Mandatory SPA order: phase numbering takes precedence over generic explore-before-script advice.
 
-## 脚本与门禁
+- After Phase 0, the next Bash action is `python3 OUTDIR/harvest_static.py <URL> OUTDIR`; do not curl/grep/Read the main entry bundle, usually over 500KB.
+- At gate A, copy, optionally adjust, then run immediately; do not manually extract APIs first.
+- Before Phase 1 completes, validate with `wc -l`; fix harvest for 404s and retry. Do not write a substitute extractor or repeatedly grep undownloaded URLs.
+- From Phase 1b onward, grep only `OUTDIR/js/*.js`; the main bundle is not a replacement for harvest.
+- For MPA, the next Bash after Phase 0 is `python3 OUTDIR/spider_mpa.py ...`.
 
-`scripts/` 仅为参考模板，**禁止**直接跑原版并当最终结果。
+## Tool and output limits
 
-**规则**：先读 → 按目标改 → 写入 `OUTDIR`（如 `recon/`）→ 记 `CHANGES.md`；不匹配则按方法论重写，只借结构。
+| Item | Rule |
+| --- | --- |
+| Large files | Never Read/grep `index-*.js` larger than 100KB into context; batch-process with OUTDIR scripts |
+| grep output | Limit with `\| head -20` or `-m 5`; retain path summaries, not bundle excerpts |
+| Validation | Use `wc -l` and `ls \| wc -l`; do not Read an entire directory |
+| Initial regex probe | Optional, at most once, against HTML or a chunk no larger than 50KB; formal static results come from harvest |
+| Reference | Use [reference.md](reference.md) for recipes/templates/troubleshooting rather than copying it inline |
 
-| 门禁 | 何时 | 参考脚本 → OUTDIR 副本 | 常见必改项 |
-|---|---|---|---|
-| **A（静态）** | Phase 0 后、**第一次**跑 harvest/spider 前 | `harvest_static.py` / `spider_mpa.py` | **多数站点默认 regex 可直接跑**；仅 manifest/方言不匹配时改 endpoint 正则、webpack/Vite `publicPath`、MPA exclude/cookie |
-| **B（运行时）** | Phase 2 后、跑 depth/coverage 前 | `runtime_harvest.js` / `preload.js` + `config.json` | Cookie/localStorage 键、neutralize 成功值、stubs、login 正则、api 前缀、hash/history |
+## Execution roadmap
 
-**SPA 强制顺序**（不可交换；Phase 编号优先于「先探索再脚本」）：
-
-| 步骤 | 必须 | 禁止 |
-|---|---|---|
-| Phase 0 完成后 | 下一条 Bash = `python3 OUTDIR/harvest_static.py <URL> OUTDIR` | curl/grep/Read 主 entry `index-*.js`（通常 >500KB） |
-| 门禁 A | 复制脚本 → 按需小改 → **立刻运行** | 先手工提取 API 再决定是否 harvest |
-| Phase 1 完成前 | `wc -l` 校验产出；404 改 harvest 重试 | 手写 extract 脚本；对未下载 URL 反复 grep |
-| Phase 1b 起 | grep 仅 `OUTDIR/js/*.js` | 用主 bundle 代替 harvest |
-
-- ✅ 复制 `harvest_static.py` → （可选）改 regex → **立即运行**
-- ❌ curl 主 bundle → grep 多次 → 写临时 extract → 最后才 harvest
-- **MPA**：Phase 0 后下一条 Bash = `python3 OUTDIR/spider_mpa.py ...`
-
----
-
-## 工具与输出约束
-
-| 约束 | 说明 |
-|---|---|
-| 大文件 | >100KB 的 `index-*.js` **禁止** Read/grep 进上下文；用 OUTDIR 脚本批处理 |
-| grep 输出 | 必须 `\| head -20` 或 `-m 5`；对话只保留 path 摘要，勿贴 bundle 片段 |
-| 校验 | 用 `wc -l`、`ls \| wc -l`；勿 Read 整目录 |
-| regex 初探 | 可选、≤1 次、仅 ≤50KB 小 chunk 或 HTML；正式静态以 harvest 为准 |
-| reference | 配方/模板/排障见 [reference.md](reference.md)，勿重复 inline 全文 |
-
----
-
-## 执行路线图
-
-```
-Phase 0 分类 + OUTDIR
-  → 门禁 A → Phase 1 harvest（★ 立刻运行 ★）
-  → Phase 1b 参数逆向
-  → Phase 2 鉴权三道门 → config.json
-  → 门禁 B → Phase 3 运行时 + 参数矩阵
-  → Phase 4 权限树（必要时）→ 重跑 Phase 3
-  → Phase 5 合并报告 + insert_assets批量插入所有发现的服务、端点api资产，无论如何插入时不允许漏掉已发现的资产
+```text
+Phase 0: classify + OUTDIR
+  → Gate A → Phase 1: harvest immediately
+  → Phase 1b: parameter reverse engineering
+  → Phase 2: three authentication gates → config.json
+  → Gate B → Phase 3: runtime + parameter matrix
+  → Phase 4: permissions, if needed → rerun Phase 3
+  → Phase 5: merge/report + batch-register all services/endpoints with insert_assets
 ```
 
-按序勾选；**前一项未完成不得进入下一 Phase**。
+Finish each item before entering the next phase.
 
-1. [ ] **Phase 0**：初探 SPA/MPA；创建 `OUTDIR` → [Phase 0](#phase-0--分类)
-2. [ ] **门禁 A + Phase 1**：复制脚本 → **立刻** harvest → `wc -l` 校验 → [Phase 1](#phase-1--静态)
-3. [ ] **Phase 1b**：锚点扩窗 + 绑定层 → `param_candidates.json` → [Phase 1b](#phase-1b--参数逆向)
-4. [ ] **Phase 2**：鉴权三道门 → `config.json` → [Phase 2](#phase-2--鉴权三道门)
-5. [ ] **门禁 B**：调整 runtime 脚本 → [Phase 3](#phase-3--运行时)
-6. [ ] **Phase 3**：depth / coverage / both；确认进壳；参数触发矩阵 → `param_samples.json`
-7. [ ] **Phase 4**（若需要）：权限树 → patch stubs → 重跑 Phase 3 → [Phase 4](#phase-4--权限树还原)
-8. [ ] **Phase 5**：合并产出 + 报告 + `insert_assets` → [Phase 5](#phase-5--合并与报告)
+## Phase 0 — Classification
 
----
+Fetch entry HTML and create OUTDIR. Do not modify the skill's `scripts/` originals.
 
-## Phase 0 — 分类
-
-拉取入口 HTML，**创建 `OUTDIR`**（勿改 skill 内 `scripts/`）：
-
-- **SPA**：空壳 + `<div id=app>` + chunk → Phase 1–5
-- **MPA**：SSR + `<form>`、无 endpoint bundle → 门禁 A 后：
+- SPA: shell HTML, `<div id=app>`, and chunks → Phases 1–5.
+- MPA: SSR/forms without an endpoint bundle → after gate A:
 
 ```bash
 python3 recon/spider_mpa.py <BASE_URL> <OUTDIR> [--cookie "session=..."] [--max 300] [--depth 5] [--exclude "logout|delete|destroy"]
 ```
 
-产出 `forms.txt`、`links.txt`、`api_inline.txt`。SPA 若 forms ≈ 0 → 切 Phase 1。
+Outputs: `forms.txt`, `links.txt`, `api_inline.txt`. If forms are approximately zero on a SPA, switch to Phase 1.
 
----
+## Phase 1 — Static
 
-## Phase 1 — 静态
-
-遵守 [脚本与门禁](#脚本与门禁) · [工具与输出约束](#工具与输出约束)。
+Follow the gates and output limits.
 
 ```bash
 python3 recon/harvest_static.py <BASE_URL> <OUTDIR>
-```
-
-harvest：解析 HTML script → webpack/Vite manifest → 下载全部 lazy chunk → 产出 `js/`、`api_static.txt`、`routes.txt`、`chunkmap.txt`。
-
-```bash
 wc -l OUTDIR/api_static.txt OUTDIR/routes.txt
 ls OUTDIR/js | wc -l
 ```
 
-- chunk 数 vs manifest：404 须改 harvest 重试，勿手工 curl 逐个 chunk
-- `api_static.txt` 过少 → 放宽 OUTDIR 内 endpoint 正则后重跑（见 reference）
+Harvest parses HTML scripts and webpack/Vite manifests, downloads lazy chunks, and produces `js/`, `api_static.txt`, `routes.txt`, and `chunkmap.txt`.
 
-### Phase 1b — 参数逆向
+Compare chunk counts with the manifest. Fix harvest for 404s rather than curling individual chunks. If API output is sparse, widen the OUTDIR endpoint regex and rerun (see reference).
 
-path 来自 Phase 1；参数字段须单独 recon。grep 规则见 [工具与输出约束](#工具与输出约束)。
+### Phase 1b — Parameter reverse engineering
 
-**完成标准**：重要接口能答——字段名、传输位置、类型推断、是否必填、样本值、置信度。
+Paths come from Phase 1; fields require separate reconnaissance. For important APIs, establish field names, locations, inferred types, required status, sample values, and confidence.
 
-#### 1b.0 — 传输形态
+#### 1b.0 Transport
 
-| 形态 | 参数在哪 | 静态优先看 |
-|---|---|---|
-| REST JSON | body + query | path 锚点旁 `(params\|data\|body)\s*:\s*\{` |
-| GraphQL | `variables` | gql 模板、`$page: Int` |
-| 传统 form | urlencoded | `<form>`、`FormData` |
-| 文件上传 | multipart | `FormData.append` |
-| 路径参数 | `/user/:id` | 路由表 + `useParams` / `$route.params` |
-| 加密/签名 | 包进 `sign`/`data` | Hook 加密函数入参（reference D 节） |
+| Form | Parameter location | Static evidence |
+| --- | --- | --- |
+| REST JSON | Body/query | `(params\|data\|body)\s*:\s*\{` near a path anchor |
+| GraphQL | `variables` | gql templates and `$page: Int` |
+| Traditional forms | URL-encoded | `<form>`, `FormData` |
+| Uploads | Multipart | `FormData.append` |
+| Path parameters | `/user/:id` | Routes, `useParams`, `$route.params` |
+| Encrypted/signed | `sign`/`data` wrappers | Hook encryption-function arguments; reference D |
 
-产出：每接口标注 `transport: query|json|form|graphql|encrypted`。
+Annotate each API with `transport: query|json|form|graphql|encrypted`.
 
-#### 1b.1 — 锚点扩窗
+#### 1b.1 Anchored context windows
 
-以已知 path 为锚，扩窗口找组包对象：
+Use known paths to locate payload construction:
 
 ```bash
 grep -n '"/api/user/list"' OUTDIR/js/*.js | head -20
@@ -202,192 +164,159 @@ grep -rhoaE '.{0,120}("/api[^"]+").{0,200}' OUTDIR/js/*.js | head -20
 grep -rhoaE '(params|data|body|payload)\s*:\s*\{' OUTDIR/js/*.js | head -20
 ```
 
-| 包装层 | 参数线索 |
-|---|---|
-| axios 实例 | `data` / `params` |
-| 统一 request | 拦截器注入全局字段 |
-| OpenAPI 客户端 | 生成 method 签名 |
-| React Query / SWR | hook 第二参数 |
-| Vue composable | composable 入参 |
+Inspect axios data/params, request interceptors' injected fields, generated OpenAPI method signatures, React Query/SWR hook arguments, and Vue composable arguments. Validation clues include yup/zod/rules, `Form.Item name=`, and embedded Swagger.
 
-类型残留：`yup`/`zod`/rules、`Form.Item name=`、内嵌 Swagger。
+Output `param_candidates.json`: `{ path, fields[], source: "static-callsite", confidence }`.
 
-→ `param_candidates.json`：`{ path, fields[], source: "static-callsite", confidence }`
+#### 1b.2 Binding layer
 
-#### 1b.2 — 绑定层
+Trace `Form field → onFinish/handleSubmit → transform → API payload`.
 
-```
-Form field → onFinish/handleSubmit → transform → API payload
-```
+- Forms: submit → transform → API.
+- Table search: `getFieldsValue()` → `params`.
+- Routes: `:id` / `?tab=`.
+- Interceptors: global tenantId/pagination/sign.
+- Select options: UI options → API enum values.
 
-| 绑定源 | 手法 |
-|---|---|
-| 表单 submit | 跟 submit → transform → API |
-| 表格搜索 | `getFieldsValue()` → `params` |
-| 路由 | `:id` / `?tab=` |
-| 拦截器 | 全局 `tenantId`、分页、sign |
-| 枚举 select | `options` → API 枚举值 |
+Trace DevTools call stacks upward from fetch/XHR.send to payload construction.
 
-DevTools call stack 从 `fetch`/`XHR.send` 往上追组包函数。
+#### 1b.3 Three payload questions
 
-#### 1b.3 — 组包三问（≠ Phase 2 鉴权三门）
+These differ from Phase 2's authentication gates:
 
-| 问 | 要答什么 |
-|---|---|
-| **组装** | payload 在哪 build、transform 痕迹 |
-| **校验** | required、pattern、enum |
-| **传输** | path / query / body / multipart / 头 |
+| Question | Evidence |
+| --- | --- |
+| Assembly | Where payload is built/transformed |
+| Validation | required/pattern/enum |
+| Transport | path/query/body/multipart/headers |
 
-拦截器门（Phase 2）顺带读全局注入字段（Authorization、`X-Tenant-Id`、sign）。
+Also inspect interceptor-injected Authorization, X-Tenant-Id, and signatures.
 
-#### 1b.4 — 与 Phase 3 衔接
+#### 1b.4 Runtime handoff
 
-候选字段来自静态/绑定层；**必填/可选/条件依赖**须 Phase 3 参数矩阵 + diff + Phase 5 错误反推。
+Static/binding evidence gives candidates. Required/optional/conditional status needs the Phase 3 matrix, sample diffs, and Phase 5 error inference.
 
----
+## Phase 2 — Three authentication gates
 
-## Phase 2 — 鉴权三道门
+Search OUTDIR/js with bounded grep output and record conclusions in config.json (recipes in reference):
 
-在 `OUTDIR/js/` grep（带 `head`），写入 `config.json`（配方见 reference）：
+| Gate | Question | Keywords |
+| --- | --- | --- |
+| Rendering | What determines logged-in state? | isLogin, getToken, cookies/localStorage |
+| Interceptor | What redirects to /login? | response_code, errno, axios interceptors |
+| Content | Where do menus/permissions originate? | menu, permission, role, acl, routes |
 
-| 门 | 问题 | 关键词 |
-|---|---|---|
-| **渲染门** | 如何判断已登录？ | `isLogin`、`getToken`、Cookie/localStorage |
-| **拦截器门** | 什么触发跳 `/login`？ | `response_code`、`errno`、axios interceptor |
-| **内容门** | 菜单/权限从哪来？ | `menu`、`permission`、`role`、`acl`、`routes` |
+A storage key name is not a credential; confirm it through chunks/request chains. Exit through gate B: save config.json and adapt runtime_harvest.js/preload.js.
 
-禁止把 localStorage 键名当凭据——须从 chunk/请求链确认。
+### Phase 2b — Optional API observation
 
-**出口 = 门禁 B**：结论落到 `config.json`，并改 `OUTDIR/runtime_harvest.js` / `preload.js`。
+Use OUTDIR/preload.js to confirm session keys, Authorization, and nested API URLs:
 
-### Phase 2b — API 观察（可选）
-
-用 OUTDIR 内 `preload.js` 确认会话键名、Authorization、嵌套 API URL：
-
-| 配置 | 产出 |
-|---|---|
+| Configuration | Output |
+| --- | --- |
 | `recordDetail: true` | `__API_RECON_DETAIL__` |
-| `observe.xhrHeaders: true` | headers 观察 |
-| `extractUrlsFromResponse: true` | 响应内子 API |
-| `observe.storageReads/cookieReads: true` | 回填 config |
+| `observe.xhrHeaders: true` | Observed headers |
+| `extractUrlsFromResponse: true` | APIs embedded in responses |
+| `observe.storageReads/cookieReads: true` | Configuration evidence |
 | `neutralizeVueRouter: true` | `__API_RECON_ROUTES__` |
 
-coverage 每轮导出：`__API_RECON_LOG__`、`__API_RECON_DETAIL__`、`__API_RECON_ROUTES__`、`__API_RECON_OBSERVE__`。
+Export `__API_RECON_LOG__`, `__API_RECON_DETAIL__`, `__API_RECON_ROUTES__`, and `__API_RECON_OBSERVE__` every coverage round.
 
----
+## Phase 3 — Runtime
 
-## Phase 3 — 运行时
+Gate B must be complete. Respect the reconnaissance boundary and credential-free mock strategy. Set `runtimeMode` to depth, coverage, or both in config.json (reference templates).
 
-须已过门禁 B；遵守 [边界与禁止](#边界与禁止agent-必读--违反即越界) · 无凭据 mock 策略。
+### Shared hooks and stubs
 
-`config.json` 设置 `"runtimeMode": "depth" | "coverage" | "both"`（模板见 reference）。
+| Layer | Scope | Purpose |
+| --- | --- | --- |
+| L1 exact | Auth/permission/bootstrap stubs | Pass initial rendering gates |
+| L2 negative-code correction | JSON responses | Replace logged-out business codes with success |
+| L3 fallback | Unmatched /api calls | Empty success bodies to render the UI |
 
-### Hook 与 stub（depth + coverage 共用）
+- Depth: fake auth, forward business-code patching, stubs, and route traversal (hash/history) → runtime_api.json.
+- Coverage: inject preload.js at document-start using CDP addScriptToEvaluateOnNewDocument or a Userscript.
 
-| 层 | 范围 | 目的 |
-|---|---|---|
-| L1 精确 | auth/权限/bootstrap stub | 过首屏鉴权 |
-| L2 负向修正 | 所有 JSON 响应 | 未登录码 → 成功 |
-| L3 兜底 | 未命中 L1 的 `/api` 等 | 空成功体，撑开 UI |
-
-- **depth**：fake auth + `forward` 改业务码 + `stubs`；遍历 `routes`（hash/history）；产出 `runtime_api.json`
-- **coverage**：**document-start** 注入 `preload.js`（CDP `addScriptToEvaluateOnNewDocument` 或 Userscript）
-
-验证：`window.__API_RECON_PRELOAD__` 存在；业务 path 不回 `/login`。
+Verify `window.__API_RECON_PRELOAD__` exists and business paths do not return to /login.
 
 ```bash
 cd recon && npm install
 node runtime_harvest.js config.json
 ```
 
-**TLS / sandbox defaults**：证书校验与 Chromium sandbox 默认开启。私有 CA 在 `config.json` 中设置 `caCert`；Python 脚本使用 `ARTEX_RECON_CA_CERT`。仅在明确授权且隔离的目标上，才可设置 `insecureTLS: true`、`allowNoSandbox: true`（JS）或 `ARTEX_RECON_INSECURE_TLS=1`（Python）。以 root 运行且未显式设置 `allowNoSandbox` 时，脚本会拒绝启动浏览器。
+TLS certificate verification and the Chromium sandbox are enabled by default. Set `caCert` for private CAs; Python uses `ARTEX_RECON_CA_CERT`. Only explicitly authorized isolated targets may use `insecureTLS: true`, `allowNoSandbox: true` (JS), or `ARTEX_RECON_INSECURE_TLS=1` (Python). Running as root without explicit allowNoSandbox causes browser startup to be refused.
 
-### 3b — coverage 动态枚举（必做）
+### 3b — Mandatory coverage enumeration
 
-1. 主导航/侧栏 — 每项点击，等网络 1–3s
-2. Tab — `role=tab`、`.ant-tabs-tab`
-3. 表格 — 首行查看/编辑/详情
-4. 工具栏 — 导出、筛选、新建（**避免不可逆删除**）
-5. 每进模块 — 合并 API/路由
-6. SPA — 对 `routes.txt` 未覆盖 path 受控 `pushState`（MPA 禁止）
+1. Click each main-navigation/sidebar item and allow 1–3 seconds for network activity.
+2. Visit tabs (`role=tab`, `.ant-tabs-tab`).
+3. Open the first table row's view/edit/details actions.
+4. Inspect toolbar export/filter/create actions while avoiding irreversible deletion.
+5. Merge APIs/routes after each module.
+6. For SPA only, use controlled pushState for uncovered routes.txt paths; never use it for MPA.
 
-**参数触发矩阵**（必做）：每模块按操作类型各录一次，**diff 多样本**：
+Capture each operation type per module and diff multiple samples:
 
-| 操作 | 通常多出的参数 |
-|---|---|
-| 列表首屏 | 分页 + 默认筛选 |
-| 点搜索 | keyword、filter |
-| 高级筛选 | 更多 optional |
-| 新建/编辑 | 完整 entity |
-| 批量/导出/排序 | `ids[]`、`exportType`、`sortField` |
+| Operation | Typical additional fields |
+| --- | --- |
+| Initial list | Pagination/default filters |
+| Search | keyword/filter |
+| Advanced filters | More optional fields |
+| Create/edit | Complete entity |
+| Batch/export/sort | ids[], exportType, sortField |
 
-**stub 下 outbound body/headers 仍真实**——以请求为准。录制 → `scan_raw.json`、`param_samples.json`、`api_detail.json`。
+Outbound bodies/headers remain real even when responses are stubbed; use requests as evidence. Save scan_raw.json, param_samples.json, and api_detail.json.
 
-- **Vue**：`neutralizeVueRouter: true` + document-start preload
-- **React**：`routes.txt` + 侧栏点击 + `pushState`
-- **both**：先 3a depth，再 3b coverage
+Vue uses neutralizeVueRouter plus document-start preload. React uses routes.txt, sidebar clicks, and pushState. Both mode runs depth before coverage.
 
----
+## Phase 4 — Restore the permission tree
 
-## Phase 4 — 权限树还原
+Run when module pages are blank or every route emits only bootstrap/locale requests: the content gate remains closed.
 
-**触发**：模块页空白 / 每路由仅 bootstrap（如 locale）→ 内容门未过。
-
-| 现象 | 含义 |
-|---|---|
-| 进壳成功 | 渲染门 + 拦截器门已过 |
-| 侧栏缺项/点击空白 | stub shape 或权限码不全 |
-| 每路由 API 相同且极少 | `v-if permission` 未通过 |
-| `routes.txt` 远少于 bundle | 须从 auth 模块补全 |
+| Symptom | Meaning |
+| --- | --- |
+| Post-login shell renders | Rendering/interceptor gates passed |
+| Missing sidebar/blank module | Incomplete stub shape or permission codes |
+| Same few APIs on every route | Permission v-if gate not passed |
+| Too few routes vs bundles | Recover missing routes from auth modules |
 
 ```bash
 grep -rhoaE '"/api[^"]*(permission|perm|role|menu|acl)[^"]*"' OUTDIR/js/*.js | sort -u | head -30
 grep -rhoaE 'userRouteAuth|getResultTree|routeMap|routeLink|menuList|authList' OUTDIR/js/*.js | head -20
-```
-
-典型链：`role_permissions`（flat codes）+ `permissions/all`（tree）→ `getResultTree` → `userRouteAuth[CODE].url`。
-
-```bash
 python3 recon/extract_route_map.py recon/js recon/
 python3 recon/build_perm_tree.py recon/js recon/ --config recon/config.json
 ```
 
-中间产出：`route_map.json`、`userRouteAuth.json`、`permissions_tree.json`、`*_stub.json`、`perm_codes_all.txt`。
+Typical chain: role_permissions flat codes + permissions/all tree → getResultTree → userRouteAuth[CODE].url.
 
-stub 检查：外层 `response_code` 与拦截器门一致；flat codes 与 tree 对齐；`routes` 覆盖 `route_map` 全部 link。
+Outputs: route_map.json, userRouteAuth.json, permissions_tree.json, *_stub.json, perm_codes_all.txt. Match outer response_code to the interceptor gate, align flat codes/tree, and cover all route_map links in routes. Update config.json and rerun Phase 3. Large SPAs may require waitUntil/routeTimeout/perRouteMs tuning (reference A3/I).
 
-更新 `config.json` 后**重跑 Phase 3**。大型 SPA 可调 `waitUntil`、`routeTimeout`、`perRouteMs`（见 reference A3/I 节）。
+## Phase 5 — Merge and report
 
----
+| Output | Phase | Contents |
+| --- | --- | --- |
+| js/, api_static.txt, routes.txt, chunkmap.txt | 1 | Static bundles/paths |
+| param_candidates.json | 1b | Candidate static fields |
+| config.json | 2 | Three gates/runtime settings |
+| runtime_api.json | 3a | Detailed depth recordings, including WS/SSE |
+| param_samples.json, scan_raw.json, api_detail.json | 3b | Samples/click log/details |
+| route_map.json and related files | 4 | Permission reconstruction, if needed |
+| params_merged.json | 5 | Merged fields/confidence |
+| api_merged.txt | 5 | `METHOD /path [params] [static\|runtime\|both]` |
+| site_map.json | 5 | Routes/APIs/parameters/features/limitations |
+| insert_assets | 5 | Every discovered service and endpoint in the asset database |
 
-## Phase 5 — 合并与报告
+### 5b Parameter merge
 
-### 产出表
+Diff param_samples.json; there is no universal merge script. Use reference J7 confidence levels: high/medium/low/pending trigger.
 
-| 文件 | 阶段 | 内容 |
-|---|---|---|
-| `js/`、`api_static.txt`、`routes.txt`、`chunkmap.txt` | 1 | 静态 bundle 与 path |
-| `param_candidates.json` | 1b | 静态参数字段候选 |
-| `config.json` | 2 | 三道门 + runtime 配置 |
-| `runtime_api.json` | 3a | depth 详细录制（含 WS/SSE） |
-| `param_samples.json`、`scan_raw.json`、`api_detail.json` | 3b | 多样本、点击日志、detail |
-| `route_map.json` 等 | 4 | 权限树中间文件（若执行） |
-| `params_merged.json` | 5 | 合并参数字段 + 置信度 |
-| `api_merged.txt` | 5 | `METHOD /path [params] [static\|runtime\|both]` |
-| `site_map.json` | 5 | 路由、API、params、功能点、局限 |
-| **insert_assets** | 5 | 将所有服务、端点资产写入资产库 |
+### 5c Error-based inference
 
-### 5b — 参数合并
+Within authorization, incomplete requests may reveal parameter requirements through HTTP 400 (`field 'x' is required`, enum errors). This is parameter reconnaissance, not vulnerability testing. Account for data wrappers, variables, and pre-encryption bizData.
 
-从 `param_samples.json` diff，**无通用合并脚本**。置信度规则见 reference J7（高/中/低/待触发）。
+Report runtimeMode, static/runtime API counts, parameter confidence, uncovered modules, and a summary of CHANGES.md relative to reference scripts.
 
-### 5c — 错误反推
-
-授权范围内可发不完整请求读 400（**属参数 recon，非漏洞测试**）：`field 'x' is required`、枚举错误等。注意 `data` 包装、`variables`、加密前 `bizData`。
-
-报告须注明：runtimeMode、静态/运行时 API 数、参数置信度、未覆盖模块、相对参考脚本的 `CHANGES.md` 摘要。
-
-`site_map.json` 建议结构：
+Suggested site_map.json:
 
 ```json
 {
@@ -406,22 +335,13 @@ stub 检查：外层 `response_code` 与拦截器门一致；flat codes 与 tree
 }
 ```
 
-更多字段与 grep 配方见 [reference.md](reference.md)。
+## General notes
 
----
+- Framework independent: webpack/Vite/Angular lazy-loading follows the same approach.
+- Transports: REST/JSON, GraphQL, WebSocket, SSE; gRPC-web is outside scope.
+- SSR: client fetch can be recorded; RSC/Server Actions cannot be fully enumerated.
+- JSVMP/WASM/strong HMAC or mTLS validation may require static-only results and explicit limitations.
+- Conditional/hidden/WASM-built parameters remain pending trigger or unreachable when unobserved.
+- Static discovery remains a fallback when runtime is blocked.
 
-## 通用说明
-
-- **框架无关**：webpack/Vite/Angular lazy load 方法相同
-- **传输**：REST/JSON、GraphQL、WebSocket、SSE；gRPC-web 不在范围
-- **SSR**：客户端 fetch 可录；RSC/Server Actions 不完全可枚举
-- **盲区**：JSVMP、WASM、HMAC/mTLS 强校验 → 静态 + 标注局限
-- **参数盲区**：条件联动、hidden params、WASM 组包 → 「待触发」/「不可达」
-- **静态是安全网**：runtime 被挡时静态仍能枚举 endpoint
-
----
-
-## 附加资源
-
-- Grep 配方、`config.json` 模板、排障、Hook、参数逆向 J 节、site_map 模板：**[reference.md](reference.md)**
-- 参考脚本路径见 [脚本与门禁](#脚本与门禁) 表
+See [reference.md](reference.md) for grep recipes, configuration templates, troubleshooting, hooks, parameter methodology, and site-map fields. Reference script locations are listed under Scripts and gates.

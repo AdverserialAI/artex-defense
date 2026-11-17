@@ -106,7 +106,7 @@ func TestSpawnTaskScopeGatesRejectAndAllow(t *testing.T) {
 		"goal":        "执行内网渗透横向",
 		"parent_ref":  goalParent.ID,
 	})
-	if !isErr || !strings.Contains(text, "父任务约束") || !strings.Contains(text, "禁止内网渗透") {
+	if !isErr || !strings.Contains(text, "parent task constraint") || !strings.Contains(text, "禁止内网渗透") {
 		t.Fatalf("goal 禁止行未拦截: isErr=%v text=%s", isErr, text)
 	}
 	assertNoChild(goalParent, goalBlockedDesc, "goal 禁止行")
@@ -117,7 +117,7 @@ func TestSpawnTaskScopeGatesRejectAndAllow(t *testing.T) {
 		"goal":        "执行内网渗透横向",
 		"parent_ref":  constraintParent.ID,
 	})
-	if !isErr || !strings.Contains(text, "操作约束") || !strings.Contains(text, "禁止内网渗透") {
+	if !isErr || !strings.Contains(text, "operational constraint") || !strings.Contains(text, "禁止内网渗透") {
 		t.Fatalf("deny 约束未拦截: isErr=%v text=%s", isErr, text)
 	}
 	assertNoChild(constraintParent, constraintBlockedDesc, "deny 约束")

@@ -56,8 +56,8 @@ func TestDecodeJSONRequiredBodySemantics(t *testing.T) {
 		wantCode int
 		wantErr  string
 	}{
-		{name: "empty body is required", body: "", wantCode: http.StatusBadRequest, wantErr: "请求正文为空"},
-		{name: "whitespace only is empty", body: " \n\t\r ", wantCode: http.StatusBadRequest, wantErr: "请求正文为空"},
+		{name: "empty body is required", body: "", wantCode: http.StatusBadRequest, wantErr: "Request body is empty"},
+		{name: "whitespace only is empty", body: " \n\t\r ", wantCode: http.StatusBadRequest, wantErr: "Request body is empty"},
 		{name: "malformed JSON", body: `{"n":`, wantCode: http.StatusBadRequest, wantErr: "invalid JSON"},
 		{name: "null leaves zero value", body: "null", wantOK: true},
 		{name: "trailing value tolerated", body: `{"n":1}{"n":2}`, wantOK: true},
@@ -149,7 +149,7 @@ func TestDecodeJSONSizeBoundary(t *testing.T) {
 	if rec.Code != http.StatusRequestEntityTooLarge {
 		t.Fatalf("status=%d want 413; body=%q", rec.Code, rec.Body.String())
 	}
-	if msg := assertSingleErrorResponse(t, rec); !strings.Contains(msg, "请求正文过大") {
+	if msg := assertSingleErrorResponse(t, rec); !strings.Contains(msg, "Request body is too large") {
 		t.Fatalf("error=%q", msg)
 	}
 }

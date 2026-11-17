@@ -225,7 +225,7 @@ WHERE archive.id=$1 FOR UPDATE OF archive,task`, archiveID).Scan(&taskID, &expID
 		}
 		if !exists {
 			taskRow["category_id"] = nil
-			warnings = append(warnings, fmt.Sprintf("任务分类 %d 已删除，已恢复为未分类", categoryID))
+			warnings = append(warnings, fmt.Sprintf("Task category %d was deleted; restored without a category", categoryID))
 		}
 	}
 	companyID, _ := jsonInt64(taskRow["company_id"])
@@ -236,7 +236,7 @@ WHERE archive.id=$1 FOR UPDATE OF archive,task`, archiveID).Scan(&taskID, &expID
 		}
 		if !exists {
 			taskRow["company_id"] = nil
-			warnings = append(warnings, fmt.Sprintf("任务企业 %d 已删除，企业关联已跳过", companyID))
+			warnings = append(warnings, fmt.Sprintf("Task company %d was deleted; company link skipped", companyID))
 		}
 	}
 	for _, key := range []string{"llm_profile_id", "active_llm_profile_id"} {
@@ -248,7 +248,7 @@ WHERE archive.id=$1 FOR UPDATE OF archive,task`, archiveID).Scan(&taskID, &expID
 			}
 			if !exists {
 				taskRow[key] = nil
-				warnings = append(warnings, fmt.Sprintf("LLM 配置 %d 已删除，已从任务配置中移除", profileID))
+				warnings = append(warnings, fmt.Sprintf("LLM profile %d was deleted and removed from task configuration", profileID))
 			}
 		}
 	}
@@ -424,7 +424,7 @@ func insertArchiveRows(tx *sql.Tx, table string, raw json.RawMessage) error {
 						}
 					}
 					row["status"] = json.RawMessage(`"interrupted"`)
-					row["error"] = json.RawMessage(`"归档恢复：原回答已中断"`)
+					row["error"] = json.RawMessage("\"Archive restored: original answer was interrupted\"")
 					row["sequence"] = json.RawMessage(strconv.FormatInt(sequence+1, 10))
 				}
 			}
@@ -501,7 +501,7 @@ func restoreArchiveAssets(tx *sql.Tx, taskID int64, raw json.RawMessage) (map[in
 			if !exists {
 				row["company_id"] = nil
 				row["company_source"] = "explicit"
-				warnings = append(warnings, fmt.Sprintf("资产 %d 的企业 %d 已删除，已恢复为未归属", oldID, companyID))
+				warnings = append(warnings, fmt.Sprintf("Company %d for asset %d was deleted; restored without company ownership", oldID, companyID))
 			}
 		}
 		if existing, found, err := findArchiveAssetNaturalID(tx, row); err != nil {
@@ -523,7 +523,7 @@ func restoreArchiveAssets(tx *sql.Tx, taskID int64, raw json.RawMessage) (map[in
 				return nil, nil, err
 			}
 			row["id"] = candidate
-			warnings = append(warnings, fmt.Sprintf("资产 ID %d 已被占用，恢复为 %d", oldID, candidate))
+			warnings = append(warnings, fmt.Sprintf("Asset ID %d is already in use; restored as %d", oldID, candidate))
 		}
 		row["task_ids"] = mergeJSONTaskID(row["task_ids"], taskID)
 		assetRaw, _ := json.Marshal(row)
@@ -664,7 +664,7 @@ func restoreTaskRelations(tx *sql.Tx, taskID int64, raw json.RawMessage) ([]stri
 	for _, row := range rows {
 		sourceID, ok := jsonInt64(row["source_task_id"])
 		if !ok || !liveTaskExists(tx, sourceID) {
-			warnings = append(warnings, fmt.Sprintf("来源任务 %d 不可用，继承关系已跳过", sourceID))
+			warnings = append(warnings, fmt.Sprintf("Source task %d is unavailable; inheritance link skipped", sourceID))
 			continue
 		}
 		created, _ := row["created_at"].(string)
@@ -689,7 +689,7 @@ func restoreTaskScopes(tx *sql.Tx, raw json.RawMessage) ([]string, error) {
 				return nil, fmt.Errorf("restore scope company reference: %w", err)
 			}
 			if !exists {
-				warnings = append(warnings, fmt.Sprintf("企业 %d 已删除，关联范围已跳过", companyID))
+				warnings = append(warnings, fmt.Sprintf("Company %d was deleted; linked scope skipped", companyID))
 				continue
 			}
 		}
@@ -720,7 +720,7 @@ func restoreTaskLLMProfiles(tx *sql.Tx, raw json.RawMessage) ([]string, error) {
 			ok = exists
 		}
 		if !ok {
-			warnings = append(warnings, fmt.Sprintf("LLM 配置 %d 已删除，配置链项已跳过", profileID))
+			warnings = append(warnings, fmt.Sprintf("LLM profile %d was deleted; configuration chain entry skipped", profileID))
 			continue
 		}
 		taskID, _ := jsonInt64(row["task_id"])
@@ -751,18 +751,18 @@ func restoreInterceptRows(tx *sql.Tx, raw json.RawMessage) error {
 			source = "unknown"
 			if row["rule_id"] != nil {
 				source = "rule"
-			} else if reason, _ := row["reason"].(string); strings.HasPrefix(reason, "[模型]") {
+			} else if reason, _ := row["reason"].(string); strings.HasPrefix(reason, "[Model]") || strings.HasPrefix(reason, "[模型]") {
 				source = "model"
 			}
 			row["decision_source"] = source
 		}
 		if status, _ := row["status"].(string); status == "pending" {
 			row["status"] = "timeout"
-			row["reason"] = "任务归档期间审批已超时"
+			row["reason"] = "Approval expired while task was archived"
 			row["decided_at"] = time.Now().UTC()
 			if audit, ok := row["audit"].(map[string]any); ok {
 				audit["effective_action"] = "deny"
-				audit["decision_reason"] = "任务归档期间审批已超时"
+				audit["decision_reason"] = "Approval expired while task was archived"
 				audit["execution_status"] = "not_executed"
 			}
 		} else if audit, ok := row["audit"].(map[string]any); ok && audit["execution_status"] == "awaiting_result" {

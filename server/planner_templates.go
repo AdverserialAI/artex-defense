@@ -37,25 +37,25 @@ const maxPlannerTemplateRequestBytes = 64 << 10 // 请求体上限（正文 32KB
 //     32KB 上限在此把守（db 层 normalize 再兜一次，双保险）。
 func validatePlannerTemplateBody(body string) error {
 	if strings.TrimSpace(body) == "" {
-		return fmt.Errorf("模板正文不能为空")
+		return fmt.Errorf("Template body is required")
 	}
 	if len(body) > db.MaxPlannerTemplateBodyBytes {
-		return fmt.Errorf("模板正文最多 %d 字节（32KB），当前 %d 字节", db.MaxPlannerTemplateBodyBytes, len(body))
+		return fmt.Errorf("Template body must not exceed %d bytes (32KB); got %d bytes", db.MaxPlannerTemplateBodyBytes, len(body))
 	}
 	t, err := parseValidateTemplate(body)
 	if err != nil {
-		return fmt.Errorf("模板语法错误：%w", err)
+		return fmt.Errorf("Template syntax error: %w", err)
 	}
 	vars := agent.PlannerVars{
-		Goal:         "拿下 example.com 后台权限",
+		Goal:         "Obtain admin access to example.com",
 		Scope:        "example.com",
-		AssetSummary: "站点 https://example.com（示例资产摘要）",
+		AssetSummary: "Site https://example.com (example asset summary)",
 		DataDir:      "/tmp/artex-validate",
 		Now:          "2026-10-21 12:00",
 	}
 	var b bytes.Buffer
 	if err := t.Execute(&b, vars); err != nil {
-		return fmt.Errorf("试渲染失败（可能引用了目录外变量；合法变量：%s）：%w", plannerTemplateVarsHint, err)
+		return fmt.Errorf("Preview render failed (possibly an unsupported variable; allowed variables: %s): %w", plannerTemplateVarsHint, err)
 	}
 	return nil
 }
@@ -73,7 +73,7 @@ var plannerTemplatesAPI = &templateAPI[db.PlannerTemplate, db.PlannerTemplateInp
 	errBuiltin:   db.ErrPlannerTemplateBuiltin,
 	errDefault:   db.ErrPlannerTemplateDefaultProtected,
 	errNotFound:  db.ErrPlannerTemplateNotFound,
-	builtinMsg:   "内置模板正文可编辑，但名称/nkey不可修改，且内置模板不能删除",
+	builtinMsg:   "Built-in template bodies can be edited, but their name/nkey cannot be changed and built-in templates cannot be deleted",
 	toInput: func(name, body string) db.PlannerTemplateInput {
 		return db.PlannerTemplateInput{Name: name, Body: body}
 	},

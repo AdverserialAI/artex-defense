@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# ARTEX 更新脚本：① Docker 从当前源码重建  ② 本地编译更新（重建二进制）
+# ARTEX update脚本：① Docker 从当前源码重建  ② 本地编译更新（重建二进制）
 # 与 install.sh 对应：install 负责首次落地，update 负责升级到新版本。
 # DB 迁移无需手动执行——artex 每次启动都会幂等重跑 schema.sql（含 ADD COLUMN/CREATE
 # INDEX IF NOT EXISTS），所以“重启即迁移”。数据（pgdata 卷、./data、./skills）不受影响。
@@ -14,23 +14,23 @@ ask(){  local p="$1" d="${2:-}" a; read -rp "$p${d:+ [$d]}: " a; echo "${a:-$d}"
 
 # ── 可选：同步仓库到最新代码（compose/脚本/本地编译源码都靠它更新）───────
 sync_repo(){
-  [ -d .git ] && command -v git >/dev/null 2>&1 || { warn "非 git 工作副本，跳过 git pull"; return; }
-  [ "$(ask '拉取最新代码 (git pull --ff-only)? (y/n)' y)" = y ] || return
+  [ -d .git ] && command -v git >/dev/null 2>&1 || { warn "Not a Git checkout; skipping git pull"; return; }
+  [ "$(ask 'Pull latest code (git pull --ff-only)? (y/n)' y)" = y ] || return
   if ! git pull --ff-only; then
-    die "git pull 未能快进（本地有改动或分支分叉）；为避免误用旧代码，本次更新已中止"
+    die "git pull could not fast-forward (local changes or diverging branches); update aborted to avoid using old code"
   fi
 }
 
 # ── ① Docker 更新 ───────────────────────────────
 update_docker(){
   command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1 \
-    || die "未检测到 docker / docker compose，请先用 ./install.sh 安装部署"
-  [ -f .env ] || die "未找到 .env，请先运行 ./install.sh 完成首次部署"
+    || die "Docker / Docker Compose not detected; deploy with ./install.sh first"
+  [ -f .env ] || die ".env not found; run ./install.sh for initial deployment first"
 
   # 可选：固定本次源码构建产物的镜像 tag；留空则沿用 .env，默认 local。
-  local tag; tag="$(ask '目标镜像 tag（回车沿用 .env / local）' '')"
+  local tag; tag="$(ask 'Target image tag (Enter to use .env / local)' '')"
   if [ -n "$tag" ]; then
-    [[ "$tag" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]] || die "非法 Docker tag：$tag"
+    [[ "$tag" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]] || die "Invalid Docker tag:$tag"
     local env_tmp; env_tmp="$(mktemp)"
     awk -v value="$tag" '
       BEGIN { replaced = 0 }
@@ -40,40 +40,40 @@ update_docker(){
     ' .env > "$env_tmp"
     chmod 600 "$env_tmp"
     mv "$env_tmp" .env
-    ok "已将 ARTEX_TAG 设为 ${tag}"
+    ok "ARTEX_TAG set to ${tag}"
   fi
 
   # 本仓库 Compose 镜像由 Dockerfile.source 构建，不是可 pull 的上游发布镜像。
   # deploy.sh 同时负责重建、数据库保护、完整健康检查和失败日志诊断。
   bash ./deploy.sh
-  ok "Docker 更新完成"
-  info "清理旧镜像（可选）：docker image prune -f"
+  ok "Docker update complete"
+  info "Clean old images (optional):docker image prune -f"
 }
 
 # ── ② 本地编译更新 ──────────────────────────────
 update_local(){
-  command -v go >/dev/null 2>&1 || die "未检测到 Go（>=1.26）：https://go.dev/dl/"
-  [ -f config.json ] || warn "未找到 config.json——若首次部署请改用 ./install.sh"
+  command -v go >/dev/null 2>&1 || die "Go >=1.26 was not detected:https://go.dev/dl/"
+  [ -f config.json ] || warn "config.json not found; use ./install.sh for initial deployment"
   ok "Go: $(go version)"
 
   if command -v npm >/dev/null 2>&1; then
     . ./scripts/lib-build.sh
-    build_embedded "重建前端静态产物…" "重新编译内嵌单二进制…"
+    build_embedded "Rebuilding static frontend…" "Recompiling binary with embedded frontend…"
   else
-    warn "未检测到 npm：编译**不内嵌前端**的后端（前端需另跑 npm run dev）"
+    warn "npm not detected: compiling backend without embedded frontend (run npm run dev separately for the frontend)"
     CGO_ENABLED=0 go build -o artex ./cmd/artex
   fi
-  ok "编译完成 → ./artex"
-  warn "请重启正在运行的 artex 进程以生效（重启时会自动迁移 schema）"
+  ok "Build complete → ./artex"
+  warn "Restart the running artex process to apply changes (schema migrates automatically on restart)"
 }
 
 echo "=============================="
-echo "  ARTEX 更新"
-echo "  1) Docker 更新（从当前源码重建）"
-echo "  2) 本地更新（go 重新编译）"
+echo "  ARTEX update"
+echo "  1) Docker update (rebuild current source)"
+echo "  2) Local update (rebuild with Go)"
 echo "=============================="
-case "$(ask '选择' 1)" in
+case "$(ask 'Select' 1)" in
   1) sync_repo; update_docker ;;
   2) sync_repo; update_local ;;
-  *) die "无效选择" ;;
+  *) die "Invalid selection" ;;
 esac

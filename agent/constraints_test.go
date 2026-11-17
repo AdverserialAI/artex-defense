@@ -32,7 +32,7 @@ func TestConstraintBlockFromStore(t *testing.T) {
 	if !strings.Contains(block, "禁止测试 192.0.2.0/24 其他地址") {
 		t.Fatalf("constraint block missing stored deny rule: %q", block)
 	}
-	if !strings.Contains(block, "不得为其派生意图或执行动作") {
+	if !strings.Contains(block, "do not derive intents or execute actions") {
 		t.Fatalf("constraint block missing out-of-scope contract: %q", block)
 	}
 }
@@ -61,10 +61,10 @@ func TestRenderConstraintBlockAllowAndDeny(t *testing.T) {
 		{Kind: "deny", Text: "禁止扫描 192.0.2.0/24 其他地址"},
 	})
 	for _, want := range []string{
-		"【操作约束（最高优先级",
-		"允许的操作：\n- 仅测试 192.0.2.10 及其 443 端口",
-		"禁止的操作：\n- 禁止扫描 192.0.2.0/24 其他地址",
-		"不得为其派生意图或执行动作",
+		"[Operational constraints: highest priority",
+		"Allowed operations:\n- 仅测试 192.0.2.10 及其 443 端口",
+		"Prohibited operations:\n- 禁止扫描 192.0.2.0/24 其他地址",
+		"do not derive intents or execute actions",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("constraint block missing %q:\n%s", want, got)

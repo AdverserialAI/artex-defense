@@ -41,17 +41,17 @@ func validatePreAgent(pg *db.DB, key string) error {
 // 上限 db.MaxTaskSourceCount；error 文案两侧逐字一致。exists 由调用侧闭包注入（便于无 DB 单测）。
 func normalizeSourceTaskIDs(raw []string, exists func(id int64) bool) ([]int64, error) {
 	if len(raw) > db.MaxTaskSourceCount {
-		return nil, fmt.Errorf("关联任务最多选择 %d 个", db.MaxTaskSourceCount)
+		return nil, fmt.Errorf("Select at most %d linked tasks", db.MaxTaskSourceCount)
 	}
 	ids := make([]int64, 0, len(raw))
 	seen := map[int64]bool{}
 	for _, r := range raw {
 		id, err := strconv.ParseInt(strings.TrimSpace(r), 10, 64)
 		if err != nil || id <= 0 || seen[id] {
-			return nil, fmt.Errorf("关联任务 id 无效或重复")
+			return nil, fmt.Errorf("Linked task IDs are invalid or duplicated")
 		}
 		if !exists(id) {
-			return nil, fmt.Errorf("关联任务 #%d 不存在", id)
+			return nil, fmt.Errorf("Linked task #%d does not exist", id)
 		}
 		seen[id] = true
 		ids = append(ids, id)

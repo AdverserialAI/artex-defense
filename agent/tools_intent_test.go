@@ -3,8 +3,8 @@ package agent
 // ═══ ARTEX 二开 · 审核流 PR4 工具行为测试 ═══
 // 两层覆盖：
 //  1. nil store：needExploration 守卫必须先于一切逻辑触发，工具返回
-//     「需要任务上下文」业务错误而不是 panic（无 PG 也能跑）。
-//  2. 真 PG（ARTEX_PG_DSN，无库自动 skip）：参数校验（expected_version 必填、
+//     「需要task context」业务错误而不是 panic（无 PG 也能跑）。
+//  2. 真 PG（ARTEX_PG_DSN，无库自动 skip）：参数校验（expected_version is required、
 //     至少一个修改字段、target_executor 校验器）必须先于任何 SQL 执行——
 //     用不存在的 intent_id 调用，若先碰库会报「意图不存在」而非参数错误。
 
@@ -44,11 +44,11 @@ func wantToolError(t *testing.T, tool actool.CoreTool, in, substr string) {
 func TestIntentEditToolsNilStoreGuard(t *testing.T) {
 	ts := NewToolSet(nil, "planner")
 	in := `{"intent_id":1,"expected_version":0,"summary":"x","reason":"r"}`
-	wantToolError(t, ts.updateIntent(), in, "任务上下文")
-	wantToolError(t, ts.cancelIntent(), in, "任务上下文")
+	wantToolError(t, ts.updateIntent(), in, "task context")
+	wantToolError(t, ts.cancelIntent(), in, "task context")
 	// review 对话同样被守卫拦住（非 human 跳过 open 预检，但守卫在最前）。
 	ts2 := NewToolSet(nil, "review")
-	wantToolError(t, ts2.updateIntent(), in, "任务上下文")
+	wantToolError(t, ts2.updateIntent(), in, "task context")
 }
 
 // ---- 第 2 层：真 PG 下的参数校验顺序 ----
@@ -77,8 +77,8 @@ func TestUpdateIntentParamValidation(t *testing.T) {
 
 	wantToolError(t, tool, `{`, "invalid input")
 	wantToolError(t, tool, `{}`, "intent_id")
-	wantToolError(t, tool, `{"intent_id":1,"summary":"x"}`, "expected_version 必填")
-	wantToolError(t, tool, `{"intent_id":1,"expected_version":0}`, "至少要传一个待修改字段")
+	wantToolError(t, tool, `{"intent_id":1,"summary":"x"}`, "expected_version is required")
+	wantToolError(t, tool, `{"intent_id":1,"expected_version":0}`, "Provide at least one field to modify")
 	wantToolError(t, tool, `{"intent_id":-3,"expected_version":1,"summary":"x"}`, "intent_id")
 	// 参数全合法但意图不存在 → 走到 DB 层报不存在（证明参数校验全部通过）。
 	wantToolError(t, tool,
@@ -93,7 +93,7 @@ func TestCancelIntentParamValidation(t *testing.T) {
 
 	wantToolError(t, tool, `{`, "invalid input")
 	wantToolError(t, tool, `{}`, "intent_id")
-	wantToolError(t, tool, `{"intent_id":2,"reason":"x"}`, "expected_version 必填")
+	wantToolError(t, tool, `{"intent_id":2,"reason":"x"}`, "expected_version is required")
 	wantToolError(t, tool, `{"intent_id":99999999,"expected_version":0,"reason":"r"}`, "not found")
 }
 

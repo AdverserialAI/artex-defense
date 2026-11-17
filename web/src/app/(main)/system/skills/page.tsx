@@ -54,7 +54,7 @@ import type { Agent, SkillItem, MCPServer, SkillCall, MissingSkill } from "@/lib
 
 function fmtTime(ts?: string) {
   if (!ts) return "Never invoked";
-  return new Date(ts).toLocaleString("zh-CN", {
+  return new Date(ts).toLocaleString("en-US", {
     month: "2-digit",
     day: "2-digit",
     hour: "2-digit",

@@ -68,8 +68,8 @@ new_case() {
 out="$(new_case first-run)" || fail "首次部署"
 [[ -f "$TMP/first-run/.env" ]] || fail ".env 未生成"
 password="$(awk -F= '$1=="POSTGRES_PASSWORD"{print $2}' "$TMP/first-run/.env")"
-[[ ${#password} -eq 64 ]] || fail "随机密码长度=${#password}"
-[[ "$out" != *"$password"* ]] || fail "默认输出泄露密码"
+[[ ${#password} -eq 64 ]] || fail "随机Password长度=${#password}"
+[[ "$out" != *"$password"* ]] || fail "默认输出泄露Password"
 [[ "$out" != *"ARTEX_JWT_SECRET"* ]] || fail "输出引用无效 JWT 环境变量"
 ! grep -q '^ARTEX_JWT_SECRET=' "$TMP/first-run/.env" || fail ".env 引用无效 JWT 环境变量"
 grep -q -- '--build' "$FAKE_LOG" || fail "默认未构建"
@@ -86,20 +86,20 @@ pass "--no-build 严格复用镜像"
 mkdir -p "$TMP/weak"
 cp "$ROOT/deploy.sh" "$TMP/weak/"
 printf 'POSTGRES_PASSWORD=artex\n' > "$TMP/weak/.env"
-if out="$(cd "$TMP/weak" && bash ./deploy.sh 2>&1)"; then fail "弱密码被接受"; fi
-[[ "$out" == *"弱默认值"* ]] || fail "弱密码错误提示不明确"
-pass "已有弱默认密码被拒绝"
+if out="$(cd "$TMP/weak" && bash ./deploy.sh 2>&1)"; then fail "弱Password被接受"; fi
+[[ "$out" == *"weak default"* ]] || fail "弱Password错误提示不明确"
+pass "已有弱默认Password被拒绝"
 
 mkdir -p "$TMP/up-fail"
 cp "$ROOT/deploy.sh" "$TMP/up-fail/"
 printf 'POSTGRES_PASSWORD=safe_pass-123\n' > "$TMP/up-fail/.env"
 if out="$(cd "$TMP/up-fail" && FAKE_UP_FAIL=1 bash ./deploy.sh 2>&1)"; then fail "Compose up 失败被忽略"; fi
-[[ "$out" == *"最近容器日志"* && "$out" == *"部署失败"* ]] || fail "up 失败缺诊断"
+[[ "$out" == *"recent container logs"* && "$out" == *"Deployment failed"* ]] || fail "up 失败缺诊断"
 pass "Compose up 失败返回非零并输出诊断"
 
 if out="$(cd "$TMP/up-fail" && FAKE_HEALTH_FAIL=1 bash ./deploy.sh 2>&1)"; then fail "健康失败被忽略"; fi
-[[ "$out" == *"健康检查失败"* ]] || fail "健康失败提示缺失"
-pass "健康检查失败返回非零"
+[[ "$out" == *"Health check failed"* ]] || fail "健康失败提示缺失"
+pass "Health check failed返回非零"
 
 mkdir -p "$TMP/update"
 cp "$ROOT/update.sh" "$ROOT/deploy.sh" "$TMP/update/"
@@ -119,6 +119,7 @@ actual_password="$("$NODE_BIN" -e 'process.stdout.write(require(process.argv[1])
 [[ "$actual_password" == 'p"a\ss' ]] || fail "config JSON 转义错误"
 case "${OSTYPE:-}" in
   msys|cygwin) ;;
+  darwin*) [[ "$(stat -f '%Lp' "$TMP/install-local/config.json")" == 600 ]] || fail "config permissions are not 600" ;;
   *) [[ "$(stat -c '%a' "$TMP/install-local/config.json")" == 600 ]] || fail "config 权限不是 600" ;;
 esac
 pass "本地安装处理 JSON 特殊字符、权限及前端目录"
@@ -126,30 +127,30 @@ pass "本地安装处理 JSON 特殊字符、权限及前端目录"
 mkdir -p "$TMP/reset"
 cp "$ROOT/reset-password.sh" "$TMP/reset/"
 out="$(cd "$TMP/reset" && bash ./reset-password.sh --dsn 'postgres://u:verysecret@example/db' -p 'long-enough' -y 2>&1)" || fail "DSN 重置模拟"
-[[ "$out" != *"verysecret"* ]] || fail "DSN 密码泄露"
+[[ "$out" != *"verysecret"* ]] || fail "DSN Password泄露"
 if local_fail_out="$(cd "$TMP/reset" && FAKE_PSQL_STATUS=1 bash ./reset-password.sh --dsn 'postgres://u:verysecret@example/db' -p 'long-enough' -y 2>&1)"; then
   fail "本地 psql 更新失败被忽略"
 fi
-[[ "$local_fail_out" != *"verysecret"* ]] || fail "本地失败输出泄露 DSN 密码"
-if (cd "$TMP/reset" && bash ./reset-password.sh -p short -y >/dev/null 2>&1); then fail "短密码被接受"; fi
-if (cd "$TMP/reset" && bash ./reset-password.sh -p "$(printf 'x%.0s' {1..73})" -y >/dev/null 2>&1); then fail "73 字节密码被接受"; fi
+[[ "$local_fail_out" != *"verysecret"* ]] || fail "本地失败输出泄露 DSN Password"
+if (cd "$TMP/reset" && bash ./reset-password.sh -p short -y >/dev/null 2>&1); then fail "短Password被接受"; fi
+if (cd "$TMP/reset" && bash ./reset-password.sh -p "$(printf 'x%.0s' {1..73})" -y >/dev/null 2>&1); then fail "73 字节Password被接受"; fi
 printf 'POSTGRES_USER=artex\nPOSTGRES_DB=artex\nPOSTGRES_PASSWORD=safe_pass\nMALICIOUS=$(touch pwned)\n' > "$TMP/reset/.env"
 docker_out="$(cd "$TMP/reset" && FAKE_DOCKER_CONSOLE=1 bash ./reset-password.sh -m docker -p 'long-enough' -y 2>&1)" || fail "Docker 重置模拟"
 [[ "$docker_out" != *"safe_pass"* && "$docker_out" != *"long-enough"* && "$docker_out" != *"postgres://unused"* ]] || fail "Docker 输出泄露凭据"
 if docker_fail_out="$(cd "$TMP/reset" && FAKE_DOCKER_CONSOLE=1 FAKE_DSN_MARKER=1 bash ./reset-password.sh -m docker -p 'long-enough' -y 2>&1)"; then
-  fail "Docker 控制台密码不一致被忽略"
+  fail "Docker 控制台Password不一致被忽略"
 fi
 [[ "$docker_fail_out" != *"safe_pass"* && "$docker_fail_out" != *"long-enough"* && "$docker_fail_out" != *"postgres://unused"* ]] || fail "Docker 失败输出泄露凭据"
 [[ ! -e "$TMP/reset/pwned" ]] || fail ".env 被当作 Shell 执行"
-pass "密码重置长度、DSN 脱敏和 .env 安全解析"
+pass "Password重置长度、DSN 脱敏和 .env 安全解析"
 
 mkdir -p "$TMP/import/export" "$TMP/import/scripts"
 cp "$ROOT/start.sh" "$TMP/import/"
 cp "$ROOT/scripts/artex-config.sh" "$TMP/import/scripts/"
 echo '{"name":"broken"}' > "$TMP/import/export/llm_profiles.jsonl"
-if out="$(cd "$TMP/import" && ARTEX_DB_URL=postgres://unused FAKE_PSQL_STATUS=1 ./start.sh import-config export 2>&1)"; then fail "导入失败被报告为成功"; fi
-[[ "$out" == *"导入 llm_profiles.jsonl 失败"* ]] || fail "导入失败提示缺失"
-[[ "$out" != *"全部配置导入完成"* ]] || fail "失败后仍显示导入完成"
+if out="$(cd "$TMP/import" && ARTEX_DB_URL=postgres://unused FAKE_PSQL_STATUS=1 bash ./start.sh import-config export 2>&1)"; then fail "导入失败被报告为成功"; fi
+[[ "$out" == *"Failed to import llm_profiles.jsonl"* ]] || fail "导入失败提示缺失"
+[[ "$out" != *"All configuration imported"* ]] || fail "失败后仍显示导入完成"
 pass "配置导入失败正确中止"
 
 # MCP 文件随配置导出、按清单安装并校验；fake psql 令数据库行为为空。
@@ -169,7 +170,7 @@ printf '#!/usr/bin/env bash\necho demo\n' > "$TMP/mcp-roundtrip/source/data/mcp/
 printf 'DEMO_SETTING=roundtrip\n' > "$TMP/mcp-roundtrip/source/data/mcp/demo/config/demo.env"
 chmod +x "$TMP/mcp-roundtrip/source/data/mcp/demo/bin/demo"
 chmod -x "$TMP/mcp-roundtrip/source/data/mcp/demo/config/demo.env"
-out="$(cd "$TMP/mcp-roundtrip/source" && ARTEX_DB_URL=postgres://unused ./start.sh export-config export 2>&1)" || fail "MCP 配置导出"
+out="$(cd "$TMP/mcp-roundtrip/source" && ARTEX_DB_URL=postgres://unused bash ./start.sh export-config export 2>&1)" || fail "MCP 配置导出"
 cmp -s "$TMP/mcp-roundtrip/source/data/mcp/demo/bin/demo" "$TMP/mcp-roundtrip/source/export/mcp/demo/bin/demo" || fail "MCP 可执行文件导出内容变化"
 cmp -s "$TMP/mcp-roundtrip/source/data/mcp/demo/config/demo.env" "$TMP/mcp-roundtrip/source/export/mcp/demo/config/demo.env" || fail "MCP 配置文件导出内容变化"
 demo_hash="$(mcp_sha "$TMP/mcp-roundtrip/source/data/mcp/demo/bin/demo")"
@@ -183,12 +184,13 @@ mkdir -p "$TMP/mcp-roundtrip/target" "$TMP/mcp-roundtrip/target/scripts"
 cp "$ROOT/start.sh" "$TMP/mcp-roundtrip/target/"
 cp "$ROOT/scripts/artex-config.sh" "$TMP/mcp-roundtrip/target/scripts/"
 cp -a "$TMP/mcp-roundtrip/source/export" "$TMP/mcp-roundtrip/target/export"
-out="$(cd "$TMP/mcp-roundtrip/target" && ARTEX_DB_URL=postgres://unused ARTEX_MCP_BUNDLE_DIR="$TMP/mcp-roundtrip/target/installed" ./start.sh import-config export 2>&1)" || fail "MCP 配置导入"
-[[ "$out" == *"全部配置导入完成"* ]] || fail "MCP 导入成功文案缺失"
+out="$(cd "$TMP/mcp-roundtrip/target" && ARTEX_DB_URL=postgres://unused ARTEX_MCP_BUNDLE_DIR="$TMP/mcp-roundtrip/target/installed" bash ./start.sh import-config export 2>&1)" || fail "MCP 配置导入"
+[[ "$out" == *"All configuration imported"* ]] || fail "MCP 导入成功文案缺失"
 cmp -s "$TMP/mcp-roundtrip/source/data/mcp/demo/bin/demo" "$TMP/mcp-roundtrip/target/installed/demo/bin/demo" || fail "MCP 可执行文件导入内容变化"
 cmp -s "$TMP/mcp-roundtrip/source/data/mcp/demo/config/demo.env" "$TMP/mcp-roundtrip/target/installed/demo/config/demo.env" || fail "MCP 配置文件导入内容变化"
 case "${OSTYPE:-}" in
   msys|cygwin) ;;
+  darwin*) [[ "$(stat -f '%Lp' "$TMP/install-local/config.json")" == 600 ]] || fail "config permissions are not 600" ;;
   *)
     [[ -x "$TMP/mcp-roundtrip/target/installed/demo/bin/demo" ]] || fail "MCP 可执行位未恢复"
     [[ ! -x "$TMP/mcp-roundtrip/target/installed/demo/config/demo.env" ]] || fail "MCP 非执行文件被错误赋予执行位"
@@ -201,19 +203,19 @@ cp "$ROOT/start.sh" "$TMP/mcp-roundtrip/corrupt/"
 cp "$ROOT/scripts/artex-config.sh" "$TMP/mcp-roundtrip/corrupt/scripts/"
 cp -a "$TMP/mcp-roundtrip/source/export" "$TMP/mcp-roundtrip/corrupt/export"
 printf 'x' >> "$TMP/mcp-roundtrip/corrupt/export/mcp/demo/bin/demo"
-if out="$(cd "$TMP/mcp-roundtrip/corrupt" && ARTEX_DB_URL=postgres://unused ARTEX_MCP_BUNDLE_DIR="$TMP/mcp-roundtrip/corrupt/installed" ./start.sh import-config export 2>&1)"; then
+if out="$(cd "$TMP/mcp-roundtrip/corrupt" && ARTEX_DB_URL=postgres://unused ARTEX_MCP_BUNDLE_DIR="$TMP/mcp-roundtrip/corrupt/installed" bash ./start.sh import-config export 2>&1)"; then
 	fail "损坏的 MCP 文件被接受"
 fi
-[[ "$out" == *"SHA256 不匹配"* ]] || fail "MCP 损坏文件缺少 SHA256 错误"
-[[ "$out" != *"全部配置导入完成"* ]] || fail "MCP 校验失败后仍显示导入完成"
+[[ "$out" == *"SHA256 mismatch"* ]] || fail "MCP 损坏文件缺少 SHA256 错误"
+[[ "$out" != *"All configuration imported"* ]] || fail "MCP 校验失败后仍显示导入完成"
 pass "MCP 损坏文件按导出清单校验并非零中止"
 
 mkdir -p "$TMP/mcp-roundtrip/skip" "$TMP/mcp-roundtrip/skip/scripts"
 cp "$ROOT/start.sh" "$TMP/mcp-roundtrip/skip/"
 cp "$ROOT/scripts/artex-config.sh" "$TMP/mcp-roundtrip/skip/scripts/"
 cp -a "$TMP/mcp-roundtrip/source/export" "$TMP/mcp-roundtrip/skip/export"
-out="$(cd "$TMP/mcp-roundtrip/skip" && ARTEX_DB_URL=postgres://unused ARTEX_IMPORT_MCP_BIN=0 ARTEX_MCP_BUNDLE_DIR="$TMP/mcp-roundtrip/skip/installed" ./start.sh import-config export 2>&1)" || fail "跳过 MCP 文件安装的导入"
-[[ "$out" == *"跳过 MCP 本地程序"* ]] || fail "跳过 MCP 文件安装提示缺失"
+out="$(cd "$TMP/mcp-roundtrip/skip" && ARTEX_DB_URL=postgres://unused ARTEX_IMPORT_MCP_BIN=0 ARTEX_MCP_BUNDLE_DIR="$TMP/mcp-roundtrip/skip/installed" bash ./start.sh import-config export 2>&1)" || fail "跳过 MCP 文件安装的导入"
+[[ "$out" == *"Skipping local MCP programs"* ]] || fail "跳过 MCP 文件安装提示缺失"
 [[ ! -e "$TMP/mcp-roundtrip/skip/installed/demo" ]] || fail "跳过安装仍创建 MCP 服务器目录"
 pass "ARTEX_IMPORT_MCP_BIN=0 只跳过 MCP 文件安装"
 

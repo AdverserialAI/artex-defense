@@ -6,7 +6,10 @@
 
 package server
 
-import "artex/db"
+import (
+	"artex/db"
+	"strings"
+)
 
 type englishDisplayText struct {
 	legacy  string
@@ -27,6 +30,15 @@ func localizeScenarioName(name string) string {
 		return translated
 	}
 	return name
+}
+
+// scenarioReference exposes an English alias while keeping saved scenario keys stable.
+func scenarioReference(key string) string {
+	translated := localizeScenarioName(key)
+	if translated == key {
+		return key
+	}
+	return strings.ReplaceAll(strings.ToLower(translated), " ", "-")
 }
 
 func localizeTaskCategory(category *db.TaskCategory) {

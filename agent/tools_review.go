@@ -82,11 +82,11 @@ func (t *ToolSet) ReviewTools() []actool.CoreTool {
 // notifyRevision 发 revision_requested 触发（§4.2.3 三件套）。
 func (t *ToolSet) setIntentStatus() actool.CoreTool {
 	return t.writeExpTool("set_intent_status",
-		"批准或驳回一条待审（proposed+executor=review+review_status=pending）意图。action=approve 批准入池（执行器=送审时预选的 pending_executor 自动转正，未预选则由引擎默认路由）；action=reject 驳回退回修订（reason 必填；意图保持 proposed 并标记 review_status=rejected，planner 会用 update_intent 修订后自动重送审）。只对审核模式意图生效。",
+		"Approve or reject one pending-review intent (proposed + executor=review + review_status=pending). approve releases the same node, promoting its selected pending_executor or using default engine routing. reject requires reason, retains proposed state with review_status=rejected, and returns the original to the Planner for update_intent revision and automatic resubmission. Applies only to review-mode intents.",
 		obj(map[string]any{
-			"intent_id": idp("待审意图 id"),
-			"action":    str("approve 或 reject"),
-			"reason":    str("驳回理由（action=reject 时必填）"),
+			"intent_id": idp("Pending-review intent ID"),
+			"action":    str("approve or reject"),
+			"reason":    str("Rejection reason (required for action=reject)"),
 		}, "intent_id", "action"),
 		func(_ context.Context, in json.RawMessage) (actool.Result, error) {
 			var req struct {
@@ -103,10 +103,10 @@ func (t *ToolSet) setIntentStatus() actool.CoreTool {
 			// 先读当前节点拿 content_version 作乐观锁版本（审的就是这份稿）。
 			node, err := t.ts.GetNode(req.IntentID)
 			if err != nil {
-				return actool.Errorf(fmt.Sprintf("读取意图失败: %v", err)), nil
+				return actool.Errorf(fmt.Sprintf("Failed to read intent: %v", err)), nil
 			}
 			if node == nil {
-				return actool.Errorf(fmt.Sprintf("意图 #%d 不存在", req.IntentID)), nil
+				return actool.Errorf(fmt.Sprintf("Intent #%d does not exist", req.IntentID)), nil
 			}
 			switch req.Action {
 			case "approve":
@@ -115,27 +115,27 @@ func (t *ToolSet) setIntentStatus() actool.CoreTool {
 					return actool.Errorf(fmt.Sprintf("approve failed: %v", reviewErrText(err, req.IntentID))), nil
 				}
 				if !ok {
-					log.Printf("[review] set_intent_status approve 意图 #%d 未生效（并发冲突）", req.IntentID)
-					return actool.Errorf(fmt.Sprintf("意图 #%d 不在待审状态（可能已被处理）", req.IntentID)), nil
+					log.Printf("[review] set_intent_status approval of intent #%d had no effect (concurrent conflict)", req.IntentID)
+					return actool.Errorf(fmt.Sprintf("Intent #%d is not pending review (it may already have been handled)", req.IntentID)), nil
 				}
-				log.Printf("[review] review 批准意图 #%d（proposed → open，pending_executor 转正）", req.IntentID)
+				log.Printf("[review] review approved intent #%d (proposed → open; pending_executor applied)", req.IntentID)
 				if t.notify != nil {
 					t.notify() // 【二开·审核流 PR1/§2.6.1】批准放行 → 唤醒 planner/worker 立即领取
 				}
 				return jsonResult(map[string]any{"approved": req.IntentID})
 			case "reject":
 				if strings.TrimSpace(req.Reason) == "" {
-					return actool.Errorf("action=reject 时 reason 必填"), nil
+					return actool.Errorf("reason is required when action=reject"), nil
 				}
 				_, newVersion, ok, err := t.ts.RequestRevisionAt(req.IntentID, req.Reason, node.ContentVersion)
 				if err != nil {
 					return actool.Errorf(fmt.Sprintf("reject failed: %v", reviewErrText(err, req.IntentID))), nil
 				}
 				if !ok {
-					log.Printf("[review] set_intent_status reject 意图 #%d 未生效（并发冲突）", req.IntentID)
-					return actool.Errorf(fmt.Sprintf("意图 #%d 不在待审状态（可能已被处理）", req.IntentID)), nil
+					log.Printf("[review] set_intent_status rejection of intent #%d had no effect (concurrent conflict)", req.IntentID)
+					return actool.Errorf(fmt.Sprintf("Intent #%d is not pending review (it may already have been handled)", req.IntentID)), nil
 				}
-				log.Printf("[review] review 驳回意图 #%d（proposed 保持，review_status=rejected，理由：%s）", req.IntentID, req.Reason)
+				log.Printf("[review] review rejected intent #%d (remains proposed; review_status=rejected; reason: %s)", req.IntentID, req.Reason)
 				// §4.2.3 三件套：revision_requested 事件（带 IntentID+理由），不用 hint 伪装。
 				if t.notifyRevision != nil {
 					t.notifyRevision(req.IntentID, req.Reason)
@@ -145,10 +145,10 @@ func (t *ToolSet) setIntentStatus() actool.CoreTool {
 				return jsonResult(map[string]any{
 					"intent_id": req.IntentID, "review_status": "rejected",
 					"content_version": newVersion,
-					"note":            "已退回 planner 修订：请等待修订稿重新送审",
+					"note":            "Returned to planner for revision. Wait for the revised draft to be resubmitted",
 				})
 			default:
-				return actool.Errorf("action 只能是 approve 或 reject"), nil
+				return actool.Errorf("action must be approve or reject"), nil
 			}
 		})
 }
@@ -157,13 +157,13 @@ func (t *ToolSet) setIntentStatus() actool.CoreTool {
 func reviewErrText(err error, id int64) error {
 	switch {
 	case errors.Is(err, db.ErrIntentNotFound):
-		return fmt.Errorf("意图 #%d 不存在", id)
+		return fmt.Errorf("Intent #%d does not exist", id)
 	case errors.Is(err, db.ErrNotPendingReview):
-		return fmt.Errorf("意图 #%d 不在待审状态（可能已被处理）", id)
+		return fmt.Errorf("Intent #%d is not pending review (it may already have been handled)", id)
 	case errors.Is(err, db.ErrStaleVersion):
-		return fmt.Errorf("意图 #%d 在处置期间被修改，请刷新后重试", id)
+		return fmt.Errorf("Intent #%d changed during processing. Refresh and retry", id)
 	case errors.Is(err, db.ErrNoteRequired):
-		return fmt.Errorf("驳回理由必填")
+		return fmt.Errorf("Rejection reason is required")
 	default:
 		return err
 	}
@@ -173,9 +173,9 @@ func reviewErrText(err error, id int64) error {
 // 复用 addOneHint 落库（origin="review"），经 notifyHint 唤醒 planner 下一轮。
 func (t *ToolSet) sendPlannerHint() actool.CoreTool {
 	return t.writeExpTool("send_planner_hint",
-		"给规划 planner 下发一条审核意见/调整建议（hint），planner 下一轮规划时会看到并据此重产意图。用于「驳回后希望 planner 换个方向重产」的场景。",
+		"Send review feedback/adjustment advice as a hint for the Planner's next round, for example to request a different direction after rejecting an intent.",
 		obj(map[string]any{
-			"hint": str("给 planner 的审核意见/调整建议（必填）"),
+			"hint": str("Review opinion/adjustment advice for the planner (required)"),
 		}, "hint"),
 		func(_ context.Context, in json.RawMessage) (actool.Result, error) {
 			var req struct {
@@ -212,22 +212,22 @@ func (t *ToolSet) sendPlannerHint() actool.CoreTool {
 // ReviewRunner（§2.6：单个/批量都收口，不再只靠 15s 轮询）。
 func (t *ToolSet) addReviewIntent() actool.CoreTool {
 	return t.writeExpTool("add_review_intent",
-		"【送审】提交一条意图进入人工审核：落 proposed + review_status=pending + executor='review' 占位，不会直接执行，只被审核面板/审核轮拾取；审核通过后同一节点转 open（资产与血缘保持不变）。与 add_intent（直投 open、立即执行）不同，本工具只送审。支持单条或 intents 数组批量。",
+		"Submit an intent for manual review: it is stored as proposed with review_status=pending and executor=review, so it cannot execute directly and is picked up only by the review panel or review runner. After approval, the same node becomes open while assets and lineage remain unchanged. Unlike add_intent, this tool only submits for review. Supports a single intent or batch submission through intents.",
 		obj(map[string]any{
-			"summary":         str("意图描述（单条模式）：做什么+为什么"),
-			"priority":        intp("优先级 1-10，默认 5"),
-			"asset_ids":       map[string]any{"type": "array", "items": map[string]any{"type": "integer"}, "description": "可选：目标资产 id（list_assets 返回的资产 id，不是探索节点 id）→ 资产锚点 + payload.asset_ids"},
-			"parent_ids":      map[string]any{"type": "array", "items": map[string]any{"type": "integer"}, "description": "可选：上游锚点 id（只能填已存在的 fact/finding 节点 id），只建 derived_from 血缘，不产生资产锚点；顶层全新方向留空（自动挂 origin fact）"},
-			"replaces":        idp("可选：本条意图替代的旧意图 id（必须已存在）"),
-			"target_executor": str("可选：建议执行器标识（executor_key，必须是已注册且启用的自定义 agent）→ payload.pending_executor，审核通过时自动转正为正式 executor"),
-			"reason":          str("可选：送审理由/给审核人的说明（写入 payload.review_reason 供审核参考）"),
-			"intents":         map[string]any{"type": "array", "items": map[string]any{"type": "object"}, "description": "批量模式：每条 {summary,priority?,asset_ids?,parent_ids?,replaces?,target_executor?,reason?}。返回 ids 与本数组等长同序（失败项 id=0，详情见 errors）"},
+			"summary":         str("[Single intent] Intent description: what to do and why"),
+			"priority":        intp("Priority 1–10; default 5"),
+			"asset_ids":       map[string]any{"type": "array", "items": map[string]any{"type": "integer"}, "description": "Optional target asset IDs (from list_assets, not exploration node IDs), used for asset anchors and payload.asset_ids"},
+			"parent_ids":      map[string]any{"type": "array", "items": map[string]any{"type": "integer"}, "description": "Optional upstream anchors: existing fact/finding IDs only. Creates derived_from lineage, not asset anchors. Omit for new top-level directions (automatically anchored to origin fact)"},
+			"replaces":        idp("Optional ID of an existing intent replaced by this intent"),
+			"target_executor": str("Optional suggested executor_key (registered, enabled custom agent); saved in payload.pending_executor and promoted to executor on approval"),
+			"reason":          str("Optional review reason/notes for the reviewer, saved in payload.review_reason"),
+			"intents":         map[string]any{"type": "array", "items": map[string]any{"type": "object"}, "description": "Batch entries: {summary,priority?,asset_ids?,parent_ids?,replaces?,target_executor?,reason?}. Returned ids match length/order (failed entries id=0; see errors)"},
 		}),
 		func(_ context.Context, in json.RawMessage) (actool.Result, error) {
 			// §2.4：审核总开关在落库前即时校验（不是一轮开始时的快照）；false 明确报错，
 			// 绝不静默改调 add_intent（否则模型以为已送审，实际绕过审核直接执行）。
 			if t.reviewEnabledFn != nil && !t.reviewEnabledFn() {
-				return actool.Errorf("该任务未开启意图审核（review_enabled=false），add_review_intent 不可用；确认无需审核时请改用 add_intent 直投"), nil
+				return actool.Errorf("Intent review is disabled (review_enabled=false); add_review_intent is unavailable. If review is unnecessary, submit directly with add_intent"), nil
 			}
 			var req struct {
 				intentItem
@@ -252,7 +252,7 @@ func (t *ToolSet) addReviewIntent() actool.CoreTool {
 					// 回退默认 worker，审核结论与实际执行不一致且审计不可见。
 					if t.checkExecutor != nil {
 						if err := t.checkExecutor(it.TargetExecutor); err != nil {
-							return 0, fmt.Errorf("target_executor %q 不可用：%v；请改用已注册且启用的自定义 agent，或不传该参数", it.TargetExecutor, err)
+							return 0, fmt.Errorf("target_executor %q is unavailable: %v. Use a registered, enabled custom agent or omit this parameter", it.TargetExecutor, err)
 						}
 					}
 					extra["pending_executor"] = it.TargetExecutor
@@ -260,7 +260,7 @@ func (t *ToolSet) addReviewIntent() actool.CoreTool {
 				if it.Replaces != nil && *it.Replaces > 0 {
 					// §2.9.2：replaces 增加存在性校验（只记录关系，不影响调度）。
 					if n, err := t.ts.GetNodeWithSources(*it.Replaces); err != nil || n == nil {
-						return 0, fmt.Errorf("replaces 旧意图 #%d 不存在", *it.Replaces)
+						return 0, fmt.Errorf("Replaced intent #%d does not exist", *it.Replaces)
 					}
 					extra["replaces"] = *it.Replaces // K21：替代关系落 payload 一个 int64
 				}
@@ -289,7 +289,7 @@ func (t *ToolSet) addReviewIntent() actool.CoreTool {
 					createdAny = true
 				}
 				// 【二开·P-LOG·A3】INFO 记批量送审。
-				log.Printf("[review] add_review_intent 批量送审 %d 条（失败 %d）", len(ids)-len(errs), len(errs))
+				log.Printf("[review] add_review_intent submitted %d intents in batch (%d failed)", len(ids)-len(errs), len(errs))
 				if createdAny {
 					t.wakeReview() // §2.6：批量合并为一次唤醒（收口在 wakeReview）
 				}
@@ -306,7 +306,7 @@ func (t *ToolSet) addReviewIntent() actool.CoreTool {
 			}
 			t.wakeReview() // §2.6：送审成功立即唤醒 ReviewRunner（ticker 仍是兜底）
 			// 【二开·P-LOG·A3】INFO 记送审（排障：这条 proposed 哪来的）。
-			log.Printf("[review] add_review_intent 送审意图 #%d（origin=%s）", id, t.worker)
+			log.Printf("[review] add_review_intent submitted intent #%d (origin=%s)", id, t.worker)
 			return jsonResult(map[string]any{"created": true, "proposed": true, "intent_id": id})
 		})
 }
@@ -345,7 +345,12 @@ func RunReviewPreScreen(ctx context.Context, cfg ReviewPreScreenConfig) (map[int
 	for _, id := range cfg.FreshIDs {
 		ids = append(ids, fmt.Sprintf("#%d", id))
 	}
-	input := fmt.Sprintf("以下是本轮需要预审的待审意图 id：%s。\n请用 list_intents(states=[\"proposed\"]) 拉取详情（审核模式下 proposed 即待审意图），结合 graph_overview 看任务全貌，逐条给出裁决，最后只输出 JSON：\n{\"<id>\": {\"verdict\": \"pass|revise\", \"note\": \"<≤200字>\"}, ...}\n- pass：与任务目标相关、不重复、不危险、执行器适配（按送审时预选的 pending_executor 判断，无预选=默认 worker），建议放行（note 必须写一句通过理由；仅标注，不会自动批准）；\n- revise：不建议放行，note 必填——明显越界（撞任务目标里的授权边界/禁止条款）、明显重复或明显危险时都要退回修订，写清需要优化的内容（给人工审核聚焦用）。\n- note 写法：每个 id 只说明当前这条意图，用 1–3 句完整中文写清要做什么、为什么、与已有意图的关系及操作约束；结论前置，禁止罗列无关 id 或用分号堆叠结论。pass 必须写一句通过理由，revise 必须给出可执行修改建议。",
+	input := fmt.Sprintf(`Pending intent IDs for this pre-screen round: %s.
+Call list_intents(states=["proposed"]) for details and graph_overview for task context. Assess each intent and return only JSON:
+{"<id>": {"verdict": "pass|revise", "note": "<at most 200 characters>"}, ...}
+- pass: relevant to the goal, nonduplicate, safe, and suited to the submitted pending_executor (none means default Worker). Include a reason; this is a recommendation, not approval.
+- revise: recommend revision for clearly out-of-scope, duplicate, or dangerous intents. Explain actionable changes for human review.
+- Each note must concern only this intent. In one to three complete English sentences, explain what it does, why approval/revision is recommended, its relationship to existing work, and operational constraints. Put the conclusion first. Do not list unrelated IDs or stack unrelated conclusions. pass requires a reason; revise requires actionable advice.`,
 		strings.Join(ids, "、"))
 	out, _, err := captureRun(ctx, agentcore.Options{
 		Provider:       cfg.Provider,
@@ -361,14 +366,14 @@ func RunReviewPreScreen(ctx context.Context, cfg ReviewPreScreenConfig) (map[int
 	// 解析 LLM 输出的 JSON 映射（宽松解析：截取首尾花括号段）
 	lo, hi := strings.Index(out, "{"), strings.LastIndex(out, "}")
 	if lo < 0 || hi <= lo {
-		return nil, fmt.Errorf("预审输出不含 JSON 映射")
+		return nil, fmt.Errorf("Pre-screen output has no JSON mapping")
 	}
 	var raw map[string]struct {
 		Verdict string `json:"verdict"`
 		Note    string `json:"note"`
 	}
 	if err := json.Unmarshal([]byte(out[lo:hi+1]), &raw); err != nil {
-		return nil, fmt.Errorf("预审 JSON 解析失败: %w", err)
+		return nil, fmt.Errorf("Failed to parse pre-screen JSON: %w", err)
 	}
 	fresh := map[int64]bool{}
 	for _, id := range cfg.FreshIDs {
@@ -498,13 +503,13 @@ func RunReviewAuto(ctx context.Context, cfg ReviewAutoConfig) ([]ReviewDecision,
 	for _, id := range cfg.FreshIDs {
 		ids = append(ids, fmt.Sprintf("#%d", id))
 	}
-	input := fmt.Sprintf(`以下是本轮待审意图 id：%s。
-请用 list_intents(states=[\"proposed\"]) 拉取详情（审核模式下 proposed 即待审意图），结合 graph_overview 看任务全貌，然后对你能明确判断的每一条给出处置决定：
-- approve：明显安全且与任务目标强相关；
-- reject：明显越界（撞任务目标里的授权边界/禁止条款）、明显重复或明显危险（删改业务数据、DoS、关闭审计、持久化后门等，note 必填，写清需要优化的内容——会退回 planner 修订原稿后重新送审）；
-- 拿不准的【不要输出】该 id：未决不做任何写操作，留给人工。
-每个决定附 ≤200 字理由 note。
-最后只输出 JSON：{"<id>": {"action": "approve|reject", "note": "<理由>"}, ...}`,
+	input := fmt.Sprintf(`Pending intent IDs for this round: %s.
+Call list_intents(states=["proposed"]) for details and graph_overview for task context, then decide only the intents you can judge clearly:
+- approve: clearly safe and strongly related to the task goal;
+- reject: clearly out of scope (violating explicit authorization/prohibitions), duplicate, or dangerous (business data deletion/modification, DoS, disabling audit, persistent backdoors, etc.). note is required with actionable revision advice; the planner will revise the original draft and resubmit.
+- Omit uncertain IDs entirely. Undecided intents receive no write and remain for human review.
+Provide a note of at most 200 characters for each decision.
+Return only JSON: {"<id>": {"action": "approve|reject", "note": "<reason>"}, ...}`,
 		strings.Join(ids, "、"))
 	out, _, err := captureRun(ctx, agentcore.Options{
 		Provider:       cfg.Provider,
@@ -519,14 +524,14 @@ func RunReviewAuto(ctx context.Context, cfg ReviewAutoConfig) ([]ReviewDecision,
 	}
 	lo, hi := strings.Index(out, "{"), strings.LastIndex(out, "}")
 	if lo < 0 || hi <= lo {
-		return nil, fmt.Errorf("自动审核输出不含 JSON 决策映射")
+		return nil, fmt.Errorf("Automatic review output has no JSON decision mapping")
 	}
 	var raw map[string]struct {
 		Action string `json:"action"`
 		Note   string `json:"note"`
 	}
 	if err := json.Unmarshal([]byte(out[lo:hi+1]), &raw); err != nil {
-		return nil, fmt.Errorf("自动审核决策 JSON 解析失败: %w", err)
+		return nil, fmt.Errorf("Failed to parse automatic-review decision JSON: %w", err)
 	}
 	fresh := map[int64]bool{}
 	for _, id := range cfg.FreshIDs {

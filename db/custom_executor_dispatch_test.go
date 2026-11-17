@@ -735,5 +735,3 @@ func TestIntentDeleteExpectedStateRace(t *testing.T) {
 		})
 	}
 }
-
-

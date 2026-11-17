@@ -31,7 +31,7 @@ func resolveSpawnTaskName(scenarioNKey, raw string, assetKeys []string) string {
 	if host == "" {
 		return name
 	}
-	return "内网渗透·" + host
+	return "Internal Penetration Testing · " + host
 }
 
 // findingDispatchAssetKeys resolves the actual host linked to the standalone
@@ -40,40 +40,40 @@ func resolveSpawnTaskName(scenarioNKey, raw string, assetKeys []string) string {
 // target_asset selected from those linked to the Finding.
 func (s *Server) findingDispatchAssetKeys(findingID int64, targetAsset string) ([]string, error) {
 	if findingID <= 0 {
-		return nil, fmt.Errorf("内网派发必须提供 finding_id，用于按实际资产去重")
+		return nil, fmt.Errorf("Internal-network dispatch requires finding_id for deduplication by actual asset")
 	}
 	finding, err := s.m.PG().GetFinding(findingID)
 	if err != nil {
-		return nil, fmt.Errorf("读取 Finding #%d 失败：%w", findingID, err)
+		return nil, fmt.Errorf("Failed to read Finding #%d: %w", findingID, err)
 	}
 	if finding == nil {
-		return nil, fmt.Errorf("Finding #%d 不存在", findingID)
+		return nil, fmt.Errorf("Finding #%d does not exist", findingID)
 	}
 	assets, err := s.m.PG().Assets().GetByIDs(finding.AssetIDs)
 	if err != nil {
-		return nil, fmt.Errorf("读取 Finding #%d 关联资产失败：%w", findingID, err)
+		return nil, fmt.Errorf("Failed to read assets linked to Finding #%d: %w", findingID, err)
 	}
 	keys := db.CanonicalAssetKeys(assets)
 	if len(keys) == 0 {
-		return nil, fmt.Errorf("Finding #%d 没有可规范化的 IP/域名资产，不能按资产派发", findingID)
+		return nil, fmt.Errorf("Finding #%d has no IP/domain assets that can be normalized; cannot dispatch by asset", findingID)
 	}
 	targetAsset = strings.TrimSpace(targetAsset)
 	if targetAsset == "" {
 		if len(keys) > 1 {
-			return nil, fmt.Errorf("Finding #%d 关联多个主机 %v，请用 target_asset 选择本次主目标", findingID, keys)
+			return nil, fmt.Errorf("Finding #%d is linked to multiple hosts %v; select the primary target using target_asset", findingID, keys)
 		}
 		return keys, nil
 	}
 	selected := db.CanonicalAssetKey(&db.Asset{IP: targetAsset})
 	if selected == "" {
-		return nil, fmt.Errorf("target_asset %q 不是有效 IP/域名", targetAsset)
+		return nil, fmt.Errorf("target_asset %q is not a valid IP/domain", targetAsset)
 	}
 	for _, key := range keys {
 		if key == selected {
 			return []string{key}, nil
 		}
 	}
-	return nil, fmt.Errorf("target_asset %q 不在 Finding #%d 的关联资产 %v 中", targetAsset, findingID, keys)
+	return nil, fmt.Errorf("target_asset %q is not among Finding #%d's linked assets %v", targetAsset, findingID, keys)
 }
 
 var dispatchFindingIDPattern = regexp.MustCompile(`(?i)finding(?:_id)?\s*(?:#|=)\s*([0-9]+)`)
@@ -92,7 +92,7 @@ func (s *Server) backfillTaskDispatchTargets() {
 		AND NOT EXISTS (SELECT 1 FROM task_dispatch_targets d WHERE d.task_id=t.id)
 		ORDER BY t.id`)
 	if err != nil {
-		log.Printf("[dispatch] 历史资产目标扫描失败: %v", err)
+		log.Printf("[dispatch] historical asset-target scan failed: %v", err)
 		return
 	}
 	defer rows.Close()
@@ -132,7 +132,7 @@ func (s *Server) backfillTaskDispatchTargets() {
 			findingID, _ = strconv.ParseInt(matches[0][1], 10, 64)
 			if _, err := s.m.PG().Exec(`INSERT INTO task_dispatch_targets
 				(task_id,finding_id,asset_key) VALUES ($1,$2,$3) ON CONFLICT(asset_key) DO NOTHING`, c.id, findingID, key); err != nil {
-				log.Printf("[dispatch] 历史任务 #%d 资产目标回填失败: %v", c.id, err)
+				log.Printf("[dispatch] failed to backfill asset targets for historical task #%d: %v", c.id, err)
 			}
 		}
 	}
@@ -140,10 +140,10 @@ func (s *Server) backfillTaskDispatchTargets() {
 
 func (s *Server) toolCheckInternalAssetTask() actool.CoreTool {
 	return roTool("check_internal_asset_task",
-		"按 Finding 实际关联的 IP/域名检查是否已创建内网渗透子任务。端口不同的同一主机使用同一资产键；必须在 spawn_task 前调用。",
+		"Check whether an internal penetration-testing subtask already exists for the IP or domain associated with a Finding. Different ports on the same host share one asset key. Must be called before spawn_task.",
 		objSchema(map[string]any{
-			"finding_id":   map[string]any{"type": "integer", "description": "触发派发的全局 Finding id"},
-			"target_asset": strParam("可选：Finding 关联多个主机时，选择本次主目标 IP/域名；必须属于该 Finding"),
+			"finding_id":   map[string]any{"type": "integer", "description": "Global ID of the Finding that triggered dispatch"},
+			"target_asset": strParam("Optional: when the Finding links to multiple hosts, select the primary target IP/domain; it must belong to this Finding"),
 		}, "finding_id"),
 		func(_ context.Context, in json.RawMessage) (actool.Result, error) {
 			var a struct {
@@ -157,7 +157,7 @@ func (s *Server) toolCheckInternalAssetTask() actool.CoreTool {
 			}
 			targets, err := s.m.PG().ListTaskDispatchTargets(keys)
 			if err != nil {
-				return actool.Errorf(fmt.Sprintf("查询内网资产派发记录失败：%v", err)), nil
+				return actool.Errorf(fmt.Sprintf("Failed to query internal asset dispatch records: %v", err)), nil
 			}
 			return jsonResult(map[string]any{
 				"finding_id": a.FindingID,

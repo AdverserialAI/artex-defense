@@ -33,7 +33,7 @@ type TaskDispatchConflictError struct {
 }
 
 func (e *TaskDispatchConflictError) Error() string {
-	return fmt.Sprintf("资产 %s 已创建内网渗透子任务 #%d", e.AssetKey, e.TaskID)
+	return fmt.Sprintf("Asset %s already has internal penetration testing subtask #%d", e.AssetKey, e.TaskID)
 }
 
 // CanonicalAssetKey collapses an IP, its services and its endpoints to one host

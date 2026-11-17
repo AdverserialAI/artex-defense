@@ -18,10 +18,10 @@ func upgradeExternalPentestReviewDefault(pg *db.DB) {
 		return
 	}
 	if _, err := pg.Exec(`UPDATE task_categories SET default_review_enabled=false,updated_at=now() WHERE nkey='外网渗透' AND default_review_enabled=true`); err != nil {
-		log.Printf("[review] 外网渗透默认审核关闭迁移失败: %v", err)
+		log.Printf("[review] external penetration testing default-review migration failed: %v", err)
 		return
 	}
 	if err := pg.SetSetting(flag, "true"); err != nil {
-		log.Printf("[review] 外网渗透默认审核迁移标记失败: %v", err)
+		log.Printf("[review] failed to mark external penetration testing default-review migration: %v", err)
 	}
 }

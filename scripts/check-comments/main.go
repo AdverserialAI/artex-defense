@@ -67,7 +67,7 @@ var proseStops = map[string]bool{
 // docMismatchAllow 登记"首词恰与本文件某方法同名但实为散文"的已知误报，
 // key = 相对路径:首词。新增条目必须在值里写明人工复核理由。
 var docMismatchAllow = map[string]string{
-	"intercept/intercept.go:Judge": "已人工复核：Judge 是 \"LLM fallback judge\" 功能的散文首词，const 块文档并非引用 Interceptor.Judge 方法",
+	"intercept/intercept.go:Judge": "Manually reviewed: Judge names the LLM fallback judge feature; this const-block documentation does not reference Interceptor.Judge",
 }
 
 type finding struct {
@@ -135,13 +135,13 @@ func (r *reporter) print() {
 		}
 	}
 	p0, p1, p2, note := r.counts()
-	fmt.Printf("\n检查完成：文件 %d 个，P0=%d，P1=%d，P2=%d，NOTE=%d\n", r.scanned, p0, p1, p2, note)
+	fmt.Printf("\nCheck complete: %d files, P0=%d, P1=%d, P2=%d, NOTE=%d\n", r.scanned, p0, p1, p2, note)
 }
 
 func main() {
-	root := flag.String("root", ".", "待检查的仓库根目录")
-	warn := flag.Bool("warn", false, "警告模式：只报告，退出码保持 0")
-	strict := flag.Bool("strict", false, "严格模式：配合 -warn 时仍按 P0/P1 返回失败")
+	root := flag.String("root", ".", "Repository root to check")
+	warn := flag.Bool("warn", false, "Warning mode: report only; exit with code 0")
+	strict := flag.Bool("strict", false, "Strict mode: fail on P0/P1 findings even with -warn")
 	flag.Parse()
 	os.Exit(run(*root, *warn, *strict))
 }
@@ -221,14 +221,14 @@ func skipDir(name string) bool {
 func checkGoFile(rep *reporter, rel, abs string) {
 	data, err := os.ReadFile(abs)
 	if err != nil {
-		rep.add(rel, 1, sevP1, "读取失败：%v", err)
+		rep.add(rel, 1, sevP1, "Read failed: %v", err)
 		return
 	}
 	lines := strings.Split(string(data), "\n")
 	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, abs, data, parser.ParseComments)
 	if err != nil {
-		rep.add(rel, 1, sevP1, "Go 解析失败：%v", err)
+		rep.add(rel, 1, sevP1, "Go parse failed: %v", err)
 		return
 	}
 	declared := collectDeclared(f)
@@ -297,14 +297,14 @@ func checkGoHeader(rep *reporter, rel, abs string, lines []string, f *ast.File, 
 		}
 	}
 	if !hasList {
-		rep.add(rel, 1, sevP1, "缺少文件头：前 12 行未找到“主要函数/类型”清单")
+		rep.add(rel, 1, sevP1, "Missing file header: no main functions/types list in the first 12 lines")
 	}
 
 	buildTagFirst := len(lines) > 0 && strings.HasPrefix(strings.TrimSpace(lines[0]), "//go:build")
 	if buildTagFirst {
-		rep.add(rel, 1, sevNote, "首行为 build tag，跳过文件头首行格式检查")
+		rep.add(rel, 1, sevNote, "First line is a build tag; skipping the first header-line format check")
 	} else if headerLine != 0 {
-		rep.add(rel, 1, sevP1, "文件头首行应为 // %s：<一句话职责>", base)
+		rep.add(rel, 1, sevP1, "First header line should be // %s: <one-sentence purpose>", base)
 	}
 
 	if headerLine < 0 {
@@ -317,7 +317,7 @@ func checkGoHeader(rep *reporter, rel, abs string, lines []string, f *ast.File, 
 
 	pkgLine := fset.Position(f.Package).Line // 1-based
 	if pkgLine >= 2 && headerEnd == pkgLine-2 {
-		rep.add(rel, pkgLine, sevP1, "文件头与 package 之间缺少空行")
+		rep.add(rel, pkgLine, sevP1, "Missing blank line between file header and package")
 	}
 
 	for i := headerLine; i <= headerEnd; i++ {
@@ -330,7 +330,7 @@ func checkGoHeader(rep *reporter, rel, abs string, lines []string, f *ast.File, 
 				continue
 			}
 			if !symbolDeclared(sym, declared) {
-				rep.add(rel, i+1, sevP1, "头注释失名：%s 未在本文件声明", sym)
+				rep.add(rel, i+1, sevP1, "Stale header name: %s is not declared in this file", sym)
 			}
 		}
 	}
@@ -471,7 +471,7 @@ func checkDocGroup(rep *reporter, rel string, fset *token.FileSet, g *ast.Commen
 	if _, ok := docMismatchAllow[rel+":"+first]; ok {
 		return
 	}
-	rep.add(rel, fset.Position(g.Pos()).Line, sevP0, "doc 注释错位：首词 %s 与声明 %s 不一致", first, strings.Join(attached, " / "))
+	rep.add(rel, fset.Position(g.Pos()).Line, sevP0, "Misplaced doc comment: first word %s does not match declaration %s", first, strings.Join(attached, " / "))
 }
 
 func firstIdentifier(text string) string {
@@ -526,16 +526,16 @@ func checkInlineLength(rep *reporter, rel string, lines []string, line, col int,
 	n := utf8.RuneCountInString(full)
 	switch {
 	case n > 150:
-		rep.add(rel, line, sevP2, "行内注释整行 %d 字符（>150）", n)
+		rep.add(rel, line, sevP2, "Inline comment line has %d characters (>150)", n)
 	case n > 120:
-		rep.add(rel, line, sevNote, "行内注释整行 %d 字符（>120）", n)
+		rep.add(rel, line, sevNote, "Inline comment line has %d characters (>120)", n)
 	}
 }
 
 func checkTextFile(rep *reporter, rel, abs, kind string) {
 	data, err := os.ReadFile(abs)
 	if err != nil {
-		rep.add(rel, 1, sevP1, "读取失败：%v", err)
+		rep.add(rel, 1, sevP1, "Read failed: %v", err)
 		return
 	}
 	lines := strings.Split(string(data), "\n")
@@ -555,9 +555,9 @@ func checkTextFile(rep *reporter, rel, abs, kind string) {
 			if idx > 0 && strings.TrimSpace(line[:idx]) != "" {
 				n := utf8.RuneCountInString(line)
 				if n > 150 {
-					rep.add(rel, lineNo, sevP2, "行内注释整行 %d 字符（>150）", n)
+					rep.add(rel, lineNo, sevP2, "Inline comment line has %d characters (>150)", n)
 				} else if n > 120 {
-					rep.add(rel, lineNo, sevNote, "行内注释整行 %d 字符（>120）", n)
+					rep.add(rel, lineNo, sevNote, "Inline comment line has %d characters (>120)", n)
 				}
 			}
 		}
@@ -593,7 +593,7 @@ func checkTSHeader(rep *reporter, rel, abs string, lines []string) {
 		}
 	}
 	if found < 0 {
-		rep.add(rel, 1, sevP1, "缺少文件头：前 10 行未找到“%s：…”职责说明", base)
+		rep.add(rel, 1, sevP1, "Missing file header: no purpose statement for %s in the first 10 lines", base)
 		return
 	}
 	first := strings.TrimSpace(lines[0])
@@ -603,12 +603,12 @@ func checkTSHeader(rep *reporter, rel, abs string, lines []string) {
 			j++
 		}
 		if j >= len(lines) || !isCommentLine(strings.TrimSpace(lines[j])) {
-			rep.add(rel, 1, sevP1, `"use client" 之后应紧跟头注释块`)
+			rep.add(rel, 1, sevP1, `A header comment block should immediately follow "use client"`)
 		}
 		return
 	}
 	if !isCommentLine(first) {
-		rep.add(rel, 1, sevP1, `文件头应以块注释或 "use client" 开头`)
+		rep.add(rel, 1, sevP1, `File header should start with a block comment or "use client"`)
 	}
 }
 
@@ -697,7 +697,7 @@ func pairMarkers(rep *reporter, rel string, markers []marker) {
 		}
 		stack := starts[m.id]
 		if len(stack) == 0 {
-			rep.add(rel, m.line, sevP1, "二开标记不配对：%s 的“止”没有对应“起”", m.id)
+			rep.add(rel, m.line, sevP1, "Unpaired customization marker: end of %s has no matching start", m.id)
 			continue
 		}
 		start := stack[len(stack)-1]
@@ -705,11 +705,11 @@ func pairMarkers(rep *reporter, rel string, markers []marker) {
 		span := m.line - start
 		switch {
 		case span <= 1:
-			rep.add(rel, m.line, sevP1, "二开标记空区间：%s（起 %d，止 %d）", m.id, start, m.line)
+			rep.add(rel, m.line, sevP1, "Empty customization marker range: %s (start %d, end %d)", m.id, start, m.line)
 		case span > 500:
-			rep.add(rel, m.line, sevP1, "二开标记区间 %d 行（>500）：%s（起 %d）", span, m.id, start)
+			rep.add(rel, m.line, sevP1, "Customization marker range has %d lines (>500): %s (start %d)", span, m.id, start)
 		case span > 80:
-			rep.add(rel, m.line, sevP2, "二开标记区间 %d 行（>80）：%s（起 %d）", span, m.id, start)
+			rep.add(rel, m.line, sevP2, "Customization marker range has %d lines (>80): %s (start %d)", span, m.id, start)
 		}
 	}
 	var leftover []marker
@@ -720,7 +720,7 @@ func pairMarkers(rep *reporter, rel string, markers []marker) {
 	}
 	sort.Slice(leftover, func(i, j int) bool { return leftover[i].line < leftover[j].line })
 	for _, m := range leftover {
-		rep.add(rel, m.line, sevP1, "二开标记不配对：%s 的“起”没有对应“止”", m.id)
+		rep.add(rel, m.line, sevP1, "Unpaired customization marker: start of %s has no matching end", m.id)
 	}
 }
 
@@ -729,7 +729,7 @@ func checkAnchor(rep *reporter, rel string, line int, text string) {
 		return
 	}
 	if m := anchorRe.FindString(text); m != "" {
-		rep.add(rel, line, sevP1, "注释使用行号锚点 %s，改用 文件#符号", m)
+		rep.add(rel, line, sevP1, "Comment uses line-number anchor %s; use file#symbol instead", m)
 	}
 }
 
@@ -741,7 +741,7 @@ func checkDenyList(rep *reporter, rel string, lines []string) {
 		}
 		for _, phrase := range denyPhrases {
 			if strings.Contains(line, phrase) {
-				rep.add(rel, i+1, sevP0, "过期字符串命中 deny-list：%q", phrase)
+				rep.add(rel, i+1, sevP0, "Obsolete string matches deny-list: %q", phrase)
 			}
 		}
 	}

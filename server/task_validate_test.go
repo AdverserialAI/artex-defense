@@ -36,7 +36,7 @@ func TestNormalizeSourceTaskIDs(t *testing.T) {
 
 	t.Run("重复 id", func(t *testing.T) {
 		_, err := normalizeSourceTaskIDs([]string{"1", "1"}, exists)
-		if err == nil || err.Error() != "关联任务 id 无效或重复" {
+		if err == nil || err.Error() != "Linked task IDs are invalid or duplicated" {
 			t.Fatalf("err=%v", err)
 		}
 	})
@@ -44,7 +44,7 @@ func TestNormalizeSourceTaskIDs(t *testing.T) {
 	t.Run("id 小于等于 0", func(t *testing.T) {
 		for _, raw := range []string{"0", "-3"} {
 			_, err := normalizeSourceTaskIDs([]string{raw}, exists)
-			if err == nil || err.Error() != "关联任务 id 无效或重复" {
+			if err == nil || err.Error() != "Linked task IDs are invalid or duplicated" {
 				t.Fatalf("raw=%q err=%v", raw, err)
 			}
 		}
@@ -52,14 +52,14 @@ func TestNormalizeSourceTaskIDs(t *testing.T) {
 
 	t.Run("非数字", func(t *testing.T) {
 		_, err := normalizeSourceTaskIDs([]string{"abc"}, exists)
-		if err == nil || err.Error() != "关联任务 id 无效或重复" {
+		if err == nil || err.Error() != "Linked task IDs are invalid or duplicated" {
 			t.Fatalf("err=%v", err)
 		}
 	})
 
-	t.Run("不存在", func(t *testing.T) {
+	t.Run("does not exist", func(t *testing.T) {
 		_, err := normalizeSourceTaskIDs([]string{"7"}, exists)
-		if err == nil || err.Error() != "关联任务 #7 不存在" {
+		if err == nil || err.Error() != "Linked task #7 does not exist" {
 			t.Fatalf("err=%v", err)
 		}
 	})
@@ -70,7 +70,7 @@ func TestNormalizeSourceTaskIDs(t *testing.T) {
 			raw[i] = fmt.Sprintf("%d", i+1000)
 		}
 		_, err := normalizeSourceTaskIDs(raw, exists)
-		want := fmt.Sprintf("关联任务最多选择 %d 个", db.MaxTaskSourceCount)
+		want := fmt.Sprintf("Select at most %d linked tasks", db.MaxTaskSourceCount)
 		if err == nil || err.Error() != want {
 			t.Fatalf("err=%v, want %q", err, want)
 		}

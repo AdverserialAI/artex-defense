@@ -22,40 +22,34 @@ import (
 
 // goalsDefaultTmpl is the built-in EDITABLE body (段 [A]) of the goals-decomposer
 // prompt, seeded into agent_prompts. No template vars are used today.
-const goalsDefaultTmpl = `你是渗透测试目标分解器。你的职责是从用户输入中识别出**最终要达成的结果**，而不是规划攻击步骤。
+const goalsDefaultTmpl = `You are a penetration testing goal decomposer. Identify the final results to achieve from user input, rather than planning attack steps.
 
-**第一步（拆分目标之前先做）：抽取操作约束**
-从「任务目标 / 任务描述」里识别操作员对【可以做什么、不可以做什么操作】的明确规定，调用 set_constraints 逐条登记（如果描述、目标中不涉及操作约束可以不进行提取操作约束）：
-- type=deny：禁止的操作（如「不扫端口」「不得对生产环境做写/删操作」「禁止爆破」「不碰某子域」）。
-- type=allow：明确允许/限定的操作范围（如「只允许被动侦察」「仅针对某域名」）。
-- 约束 ≠ 目标，也 ≠ 攻击步骤：它是对操作行为边界的规定。
-- **约束必须【自包含、写死具体目标】**：把「当前目标/当前端口/当前IP/当前域名/本站」这类**指代词**替换成任务目标/描述里的**具体值**。约束会被单独注入到执行阶段的提示里，脱离上下文后指代词无法判断指谁。
-  例：目标是 https://abc.example.net → 写「只允许测试 abc.example.net」而不是「只允许测试当前目标」；「仅测目标端口 443，不扫其他端口」而不是「只测当前端口」。若原文只说「当前目标」但目标地址已明确，就把地址填进去。
-- **只登记目标/描述里【明确写出或强调】的约束，严禁臆造**；拿不准类型时用 deny（更保守）。
-- 若目标/描述里确实没有任何操作约束，则**不要**调用 set_constraints。
-登记完约束（如有）后，再进行下面的目标拆分。
+**First, extract operational constraints before splitting goals.**
+Identify the operator's explicit rules about allowed/prohibited actions in the task goal/description. Register each with set_constraints, if any:
+- type=deny: prohibited actions, such as no port scanning, no production writes/deletion, no brute force, or excluding a subdomain.
+- type=allow: an explicitly permitted/restricted scope, such as passive reconnaissance only or a specified domain only.
+- Constraints define action boundaries; they are neither goals nor attack steps.
+- Constraints must be self-contained and name concrete targets. Replace references such as current target/current port/current IP/current domain/this site with the actual values in the task. Constraints are injected separately during execution and must remain understandable without context. For https://abc.example.net, write 'Only test abc.example.net', not 'Only test the current target'; write 'Only test target port 443; do not scan other ports', not 'Only test the current port'. Resolve references when the target address is known.
+- Register only constraints explicitly stated/emphasized in the goal/description; never invent them. If the type is uncertain, use deny conservatively.
+- If there are no operational constraints, do not call set_constraints.
+After registering any constraints, split the goals.
 
-**目标 = 最终可交付/可核验的结果**
+**A goal is a final deliverable or verifiable result.**
+Do not make reconnaissance, endpoint scanning, analysis/verification processes, attack/exploitation methods, or result-verification steps into subgoals.
 
-**不是目标的内容（禁止列为子目标）**：
-- 信息收集、侦察、端点扫描
-- 漏洞分析与验证过程
-- 攻击步骤、利用手段
-- 结果验证步骤
+**Decomposition principles**
+- One final user goal means one goal.
+- Split multiple independent final deliverables into separate goals.
+- Supply vulnclass when a specific vulnerability class applies; omit for information-gathering/business-logic goals.
+- Never invent goals the user did not request.
 
-**拆分原则**：
-- 用户描述的最终目标只有一个 → 输出一个
-- 存在多个**相互独立**的最终交付物 → 分别列出
-- 能对应明确漏洞类的标注 vulnclass；信息收集/业务逻辑类目标留空
-- 严禁臆造用户未提及的目标
+**Match goal types to Shell intent semantically.**
+Ignore differences in case, spaces, hyphens, underscores, and language. Use full meaning rather than mechanical keyword matching; structured goal types take precedence over isolated words.
+- Strong Shell/foothold intent: getshell, get shell, shell, interactive/reverse/bind shell, webshell/web shell, C2/command and control, beacon, meterpreter, session, foothold, obtaining control of a host/server, remote/interactive control, uploading and connecting a WebShell, bringing a C2/session online, establishing a foothold, or continuing penetration after entering an internal network. When context explicitly requests these results, set vulnclass=getshell and specify acceptance evidence: a connected WebShell successfully executing a verification command, or an actual reverse/C2 session online with interactive evidence. RCE output, file upload, deserialization, or payload deployment alone is insufficient. WebShell, reverse Shell, and C2 are alternative implementation paths, not separate mandatory goals that must all succeed.
+- Weak privilege intent: obtaining privileges, privilege escalation, root/Administrator/SYSTEM/highest privilege, privileged access. These words alone do not imply getshell. Classify as getshell only when context also requires a Shell, interactive access, session, remote control, or foothold; otherwise retain privilege-escalation or vulnerability-verification goals.
+- Detection/verification intent: detect, probe, scan, investigate, verify, confirm, reproduce, vulnerability validation, PoC/proof of concept, whether a vulnerability exists/is exploitable/can execute commands, verify RCE/upload/deserialization. Classify by the actual vulnerability (rce, file_upload, deserialization, sqli, etc.) without adding getshell or requiring a Shell. 'Verify RCE' means rce; 'Verify RCE and establish a reverse Shell' includes getshell.
 
-**目标类型与 Shell 意图语义匹配（避免误拆、误阻）**：
-- 忽略关键词大小写、空格、连字符、下划线和中英文表达差异，结合完整语义判断，不做机械单词匹配；结构化目标类型优先于孤立关键词。
-- **强 Shell/立足点意图**：getshell、get shell、shell、interactive shell、reverse shell、bind shell、webshell、web shell、C2、command and control、beacon、meterpreter、session、foothold；拿 Shell、拿主机、拿下主机、控制主机、控制服务器、远程控制、交互控制、交互 Shell、反弹 Shell、反弹会话、绑定 Shell、上传并连接 WebShell、C2 上线、木马上线、会话上线、建立会话、建立/获得立足点、进入内网后继续渗透。上下文明确要求上述结果时，将 Goal 标为 vulnclass=getshell，并写明验收条件：WebShell 已连接并成功执行验证命令，或反弹/C2 会话实际上线且具有交互证据；仅 RCE 回显、文件上传、反序列化或木马投放不算完成。WebShell、反弹 Shell、C2 是可选实现路径，不得拆成必须全部完成的独立目标。
-- **弱权限意图**：获取/获得/拿权限、提权、root、administrator、system 权限、最高权限、获取目标权限、特权访问。弱权限词不能单独判定为 getshell；只有上下文同时要求 Shell、交互访问、会话、远程控制或立足点时才归类为 getshell，否则保持权限提升或漏洞验证目标。
-- **检测/验证意图**：检测、探测、扫描、排查、验证、确认、复现、漏洞验证、漏洞检测、PoC、proof of concept、是否存在、是否可利用、能否执行命令、验证 RCE、验证上传、验证反序列化。只有检测/验证意图时按实际漏洞分类为 rce、file_upload、deserialization、sqli 等，不擅自升级为 getshell，也不要求继续建立 Shell。例如「验证 RCE」是 rce；「验证 RCE 并建立反弹 Shell」才包含 getshell 目标。
-
-调用 set_goals 提交结果。`
+Submit the results with set_goals. Write goals and constraints in English.`
 
 // goalsScopeTail is the code-owned tail appended after the editable goals body
 // WHEN an asset store + task context are available. It teaches the decomposer to
@@ -64,19 +58,16 @@ const goalsDefaultTmpl = `你是渗透测试目标分解器。你的职责是从
 // on released DBs and can't be edited away — same pattern as the trafficTool tail.
 const goalsScopeTail = `
 
-**额外职责：登记测试资产范围**
-除拆分目标外，你还要从「任务目标 / 任务描述」里识别出**明确给出的测试资产范围**，调用 add_task_scope 登记（本任务的授权边界，也是资产测试覆盖度的分母）。**最小范围原则：只登记用户明确点到的那一个目标，绝不擅自放大。**
-- 目标是 URL 或带主机名的地址（如 https://xxx.example.com/path、app.example.com）→ 取其**完整主机名**，kind=subdomain，value=完整主机名。
-  例：目标 https://a1b2c3.lab.example.net/path → kind=subdomain，value=a1b2c3.lab.example.net（**不是** example.net）。
-  **严禁**把带子域的主机名缩成根域名——看到 xxx.example.com 就登记整个 example.com 会把范围扩到用户目标之外，违背最小范围原则。
-- 仅当用户给的就是**裸根域名、且不含任何子域**（如直接写 example.com），或明确说“整个站点 / 所有子域 / 全域名” → 才用 kind=root_domain，value=example.com。
-- 纯 IP 或网段 → kind=ip / cidr，value=IP 或 CIDR。
-- **不要**登记公司范围（company）——任务刚建立、资产系统里通常还没有这家公司，登记不上，公司级范围交由后续 plan 阶段处理。
-其它规则：
-- 只登记**目标/描述里明确写出**的范围；严禁臆造或推断未提及的域名/IP。
-- reason 简述依据来自哪句话，便于审计。
-- 若目标/描述中没有任何明确资产范围，则**不要**调用 add_task_scope。
-先用 add_task_scope 登记范围（如有），再调用 set_goals 提交目标。`
+**Additional responsibility: register test asset scope.**
+Extract explicitly stated test asset scope from the task goal/description and register it with add_task_scope. This defines the task authorization boundary and coverage denominator. Apply minimum scope: register only the target explicitly named; never broaden it yourself.
+- For a URL or hostname-bearing address (https://xxx.example.com/path, app.example.com), use its complete hostname: kind=subdomain, value=complete hostname. For https://a1b2c3.lab.example.net/path, register a1b2c3.lab.example.net, not example.net. Never shorten a subdomain to its root domain; doing so expands authorization beyond the user's target.
+- Use kind=root_domain only when the user supplies a bare root domain without subdomains (example.com), or explicitly authorizes the whole site/all subdomains/entire domain.
+- For a plain IP/network, use kind=ip/cidr with that IP/CIDR.
+- Do not register company scope: a new task usually has no corresponding company in the asset system. Leave company scope to later planning.
+- Register only explicitly stated scope; never invent or infer unmentioned domains/IPs.
+- Give a brief reason identifying the source statement for auditability.
+- If no explicit asset scope exists, do not call add_task_scope.
+Register scope first, when present, then submit goals with set_goals.`
 
 // GoalSpec is one decomposed objective.
 type GoalSpec struct {
@@ -151,9 +142,9 @@ func DecomposeGoalsWithProvider(ctx context.Context, prov llm.Provider, dataDir,
 		tools = append(tools, tsx.addTaskScope())
 		sys += goalsScopeTail
 	}
-	userMsg := "任务目标：\n" + goalText
+	userMsg := "Task goal:\n" + goalText
 	if d := strings.TrimSpace(desc); d != "" {
-		userMsg += "\n\n任务描述（背景信息，可能含靶标范围/flag 数量/交战说明；仅供参考，不要臆造其中未提及的内容）：\n" + d
+		userMsg += "\n\nTask description (background that may include scope, flag count, or engagement instructions; use only what is stated and do not invent missing details):\n" + d
 	}
 	// Use captureRun so every LLM step is emitted as an activity record (visible in
 	// the plan tab under the round-0 marker). Falls back gracefully when emit is nil.

@@ -80,11 +80,11 @@ func (s *Server) pgCreateConversation(w http.ResponseWriter, r *http.Request) {
 	}
 	req.AgentKey = strings.TrimSpace(req.AgentKey)
 	if req.AgentKey == "" {
-		writeErr(w, 400, "agent_key 不能为空")
+		writeErr(w, 400, "agent_key is required")
 		return
 	}
 	if utf8.RuneCountInString(req.AgentKey) > maxConversationAgentKeyRunes {
-		writeErr(w, 400, fmt.Sprintf("agent_key 最多 %d 个字符", maxConversationAgentKeyRunes))
+		writeErr(w, 400, fmt.Sprintf("agent_key must not exceed %d characters", maxConversationAgentKeyRunes))
 		return
 	}
 	a, err := pg.GetAgentByKey(req.AgentKey)
@@ -93,21 +93,21 @@ func (s *Server) pgCreateConversation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if a == nil {
-		writeErr(w, 404, "agent 不存在")
+		writeErr(w, 404, "Agent does not exist")
 		return
 	}
 	if req.LLMProfileID != nil {
 		if _, ok := s.loadProfileConfig(*req.LLMProfileID); !ok {
-			writeErr(w, 400, "指定的 LLM 配置不存在或未设置 API Key")
+			writeErr(w, 400, "The specified LLM configuration does not exist or has no API key")
 			return
 		}
 	}
 	title := strings.TrimSpace(req.Title)
 	if title == "" {
-		title = "新对话"
+		title = "New conversation"
 	}
 	if utf8.RuneCountInString(title) > maxConversationTitleRunes {
-		writeErr(w, 400, fmt.Sprintf("标题最多 %d 个字符", maxConversationTitleRunes))
+		writeErr(w, 400, fmt.Sprintf("Title must not exceed %d characters", maxConversationTitleRunes))
 		return
 	}
 	c, err := pg.CreateConversation(req.AgentKey, title, req.LLMProfileID)
@@ -131,7 +131,7 @@ func (s *Server) pgUpdateConversation(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.LLMProfileID != nil {
 		if _, ok := s.loadProfileConfig(*req.LLMProfileID); !ok {
-			writeErr(w, 400, "指定的 LLM 配置不存在或未设置 API Key")
+			writeErr(w, 400, "The specified LLM configuration does not exist or has no API key")
 			return
 		}
 	}
@@ -178,17 +178,17 @@ func (s *Server) pgRenameConversation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if req.Title == nil && req.Pinned == nil {
-		writeErr(w, 400, "至少需要提供 title 或 pinned")
+		writeErr(w, 400, "Provide at least title or pinned")
 		return
 	}
 	if req.Title != nil {
 		title := strings.TrimSpace(*req.Title)
 		if title == "" {
-			writeErr(w, 400, "标题不能为空")
+			writeErr(w, 400, "Title is required")
 			return
 		}
 		if utf8.RuneCountInString(title) > maxConversationTitleRunes {
-			writeErr(w, 400, fmt.Sprintf("标题最多 %d 个字符", maxConversationTitleRunes))
+			writeErr(w, 400, fmt.Sprintf("Title must not exceed %d characters", maxConversationTitleRunes))
 			return
 		}
 		req.Title = &title
@@ -255,7 +255,7 @@ func (s *Server) pgDeleteConversationsBatch(w http.ResponseWriter, r *http.Reque
 	seen := make(map[int64]struct{}, len(request.IDs))
 	for _, id := range request.IDs {
 		if id <= 0 {
-			writeErr(w, http.StatusBadRequest, "对话 id 无效")
+			writeErr(w, http.StatusBadRequest, "Invalid conversation ID")
 			return
 		}
 		if _, exists := seen[id]; exists {
@@ -265,7 +265,7 @@ func (s *Server) pgDeleteConversationsBatch(w http.ResponseWriter, r *http.Reque
 		ids = append(ids, id)
 	}
 	if len(ids) == 0 || len(ids) > maxConversationDeleteBatch {
-		writeErr(w, http.StatusBadRequest, fmt.Sprintf("ids 数量必须为 1-%d", maxConversationDeleteBatch))
+		writeErr(w, http.StatusBadRequest, fmt.Sprintf("ids must contain 1–%d entries", maxConversationDeleteBatch))
 		return
 	}
 	for _, id := range ids {
@@ -394,7 +394,7 @@ func (s *Server) pgSendConversationMessage(w http.ResponseWriter, r *http.Reques
 	}
 	msg := strings.TrimSpace(req.Message)
 	if msg == "" && len(req.Attachments) == 0 {
-		writeErr(w, 400, "消息不能为空")
+		writeErr(w, 400, "Message is required")
 		return
 	}
 	agentMessage, ok := s.prepareChatMentionMessage(w, msg)
@@ -414,7 +414,7 @@ func (s *Server) pgSendConversationMessage(w http.ResponseWriter, r *http.Reques
 	s.chatMu.Lock()
 	if s.chatBusy[busyKey] {
 		s.chatMu.Unlock()
-		writeErr(w, 409, "该会话正在处理上一条消息，请稍候")
+		writeErr(w, 409, "This conversation is still processing the previous message. Please wait")
 		return
 	}
 	s.chatBusy[busyKey] = true
@@ -434,10 +434,10 @@ func (s *Server) pgSendConversationMessage(w http.ResponseWriter, r *http.Reques
 	if _, err := pg.AppendConvActivity(c.ID, ua); err != nil {
 		log.Printf("[conv %d] append user msg failed: %v", c.ID, err)
 	}
-	if c.Title == "" || c.Title == "新对话" {
+	if c.Title == "" || c.Title == "New conversation" {
 		title := firstLine(msg, 40)
 		if title == "" {
-			title = "附件消息"
+			title = "Attachment message"
 		}
 		_ = pg.RenameConversation(c.ID, title)
 	}
@@ -512,7 +512,7 @@ func (s *Server) runConversationTurn(ctx context.Context, cancel context.CancelC
 	}
 	// Only the first turn executes a historical retest. Follow-up conversation
 	// turns may explain the sealed result; the result tool refuses to overwrite it.
-	finishStatus, finishReason := "failed", "复测未能启动"
+	finishStatus, finishReason := "failed", "Retest could not be started"
 	if c.AgentKey == db.FindingRetestAgentKey {
 		// Read without the run cancellation so an immediate stop still seals pending.
 		r, err := s.m.pg.FindingRetestForConversation(context.Background(), c.ID)
@@ -520,7 +520,7 @@ func (s *Server) runConversationTurn(ctx context.Context, cancel context.CancelC
 			// The sealing defer below needs r.ID, which we do not have here. Seal by
 			// conversation instead, otherwise the row stays 'pending' forever.
 			log.Printf("[conv %d] load retest: %v", c.ID, err)
-			if err := s.m.pg.FailPendingRetestForConversation(c.ID, "复测状态读取失败，请重新发起"); err != nil {
+			if err := s.m.pg.FailPendingRetestForConversation(c.ID, "Failed to read retest status. Start a new retest"); err != nil {
 				log.Printf("[conv %d] seal retest: %v", c.ID, err)
 			}
 			return
@@ -528,7 +528,7 @@ func (s *Server) runConversationTurn(ctx context.Context, cancel context.CancelC
 		if r != nil && r.Status == "pending" {
 			defer func() {
 				if ctx.Err() != nil {
-					finishStatus, finishReason = "stopped", "复测已停止或服务已关闭"
+					finishStatus, finishReason = "stopped", "Retest has stopped or the service has shut down"
 				}
 				s.finishRetest(r.ID, finishStatus, finishReason)
 			}()
@@ -574,7 +574,7 @@ func (s *Server) runConversationTurn(ctx context.Context, cancel context.CancelC
 		finishReason = runErr.Error()
 		if ctx.Err() == nil {
 			_, _ = pg.AppendConvActivity(c.ID, db.Activity{Worker: c.AgentKey, Kind: "text", IsError: true,
-				Summary: "（出错：" + runErr.Error() + "）", Detail: runErr.Error()})
+				Summary: "(Error: " + runErr.Error() + "）", Detail: runErr.Error()})
 		}
 	} else {
 		finishStatus, finishReason = "completed", ""
@@ -602,7 +602,7 @@ func (s *Server) settlePreAgentConversation(ctx context.Context, taskID int64, e
 		seed, err := t.Store.CustomSeedIntent(executorKey)
 		if err != nil {
 			xlog.Oncef("pre-agent-settle-read-"+t.ID, 5*time.Minute, xlog.LevelError,
-				"[executor] task %s 读取已领取种子失败: %v", t.ID, err)
+				"[executor] task %s failed to read claimed seed: %v", t.ID, err)
 			if sleepCtx(ctx, 800*time.Millisecond) {
 				return
 			}
@@ -614,7 +614,7 @@ func (s *Server) settlePreAgentConversation(ctx context.Context, taskID int64, e
 		changed, err := t.Store.CompareAndSetIntentState(seed.ID, "running", target)
 		if err != nil {
 			xlog.Oncef("pre-agent-settle-write-"+t.ID, 5*time.Minute, xlog.LevelError,
-				"[executor] task %s 种子 #%d 结算为 %s 失败: %v", t.ID, seed.ID, target, err)
+				"[executor] task %s failed to settle seed #%d as %s: %v", t.ID, seed.ID, target, err)
 			if sleepCtx(ctx, 800*time.Millisecond) {
 				return
 			}
@@ -623,7 +623,7 @@ func (s *Server) settlePreAgentConversation(ctx context.Context, taskID int64, e
 		if !changed {
 			return
 		}
-		log.Printf("[executor] task %s 对话型 Agent 结算首个意图 #%d：%s", t.ID, seed.ID, target)
+		log.Printf("[executor] task %s conversational agent settled first intent #%d: %s", t.ID, seed.ID, target)
 		s.engine.touch(t.ID)
 		if target == "done" || !s.engine.isUncontrolledByPlanner(seed) {
 			t.NotifyDone(seed.ID)
@@ -681,7 +681,7 @@ func (s *Server) startTriggeredRun(agentKey, title, message string, taskID int64
 	s.triggerCfg[agentKey] = cfg
 	s.triggerQ[agentKey] = append(s.triggerQ[agentKey], triggeredRun{agentKey: agentKey, title: title, message: message, taskID: taskID, taskDesc: taskDesc, taskGoal: taskGoal, mergeable: mergeable, invocations: invocations})
 	// 【二开·P-LOG·O3】INFO 记触发入队（排障：触发器收到没有、排队还是立即跑）。
-	log.Printf("[trigger] 触发入队：agent %s task#%d（%s，队列 %d 条）", agentKey, taskID, firstLine(title, 40), len(s.triggerQ[agentKey]))
+	log.Printf("[trigger] queued agent %s task#%d (%s; %d queued events)", agentKey, taskID, firstLine(title, 40), len(s.triggerQ[agentKey]))
 	s.pumpLocked(agentKey)
 	s.queueMu.Unlock()
 	return true
@@ -775,9 +775,9 @@ func taskContextHeader(taskID int64, desc, goal string) string {
 		return ""
 	}
 	if goal != "" {
-		return fmt.Sprintf("【任务 #%d %s（目标：%s）】", taskID, trunc(desc, 200), trunc(goal, 500))
+		return fmt.Sprintf("[Task #%d %s (goal: %s)]", taskID, trunc(desc, 200), trunc(goal, 500))
 	}
-	return fmt.Sprintf("【任务 #%d %s】", taskID, trunc(desc, 200))
+	return fmt.Sprintf("[Task #%d %s]", taskID, trunc(desc, 200))
 }
 
 // finalTriggerMessage renders the message actually sent to the agent for a single
@@ -801,18 +801,18 @@ func mergeTriggeredRuns(items []triggeredRun) triggeredRun {
 	}
 	first := items[0]
 	var b strings.Builder
-	fmt.Fprintf(&b, "【本会话合并了任务 #%d 的 %d 条触发事件，请一并处理】\n", first.taskID, len(items))
+	fmt.Fprintf(&b, "[This conversation combines trigger events for task #%d (%d events); process them together]\n", first.taskID, len(items))
 	if h := taskContextHeader(first.taskID, first.taskDesc, first.taskGoal); h != "" {
 		fmt.Fprintf(&b, "%s\n", h) // same task → task context appears once
 	}
 	var invocations []findingInvocationRef
 	for i, it := range items {
-		fmt.Fprintf(&b, "\n── 触发 %d ──\n%s\n", i+1, it.message)
+		fmt.Fprintf(&b, "\n── Trigger %d ──\n%s\n", i+1, it.message)
 		invocations = append(invocations, it.invocations...)
 	}
 	return triggeredRun{
 		agentKey:    first.agentKey,
-		title:       fmt.Sprintf("合并触发 · task#%d · %d 条", first.taskID, len(items)),
+		title:       fmt.Sprintf("Combined triggers · task#%d · %d events", first.taskID, len(items)),
 		message:     b.String(),
 		taskID:      first.taskID,
 		mergeable:   true,
@@ -843,7 +843,7 @@ func mergeAllRuns(items []triggeredRun) triggeredRun {
 		invocations = append(invocations, it.invocations...)
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "【本会话合并了队列中的 %d 条触发事件（共 %d 个任务），请一并处理】\n", len(items), len(order))
+	fmt.Fprintf(&b, "[This conversation combines %d queued trigger events across %d tasks; process them together]\n", len(items), len(order))
 	seq := 0
 	for _, tid := range order {
 		g := groups[tid]
@@ -852,12 +852,12 @@ func mergeAllRuns(items []triggeredRun) triggeredRun {
 		}
 		for _, it := range g {
 			seq++
-			fmt.Fprintf(&b, "\n── 触发 %d（task#%d）──\n%s\n", seq, tid, it.message)
+			fmt.Fprintf(&b, "\n── Trigger %d (task#%d) ──\n%s\n", seq, tid, it.message)
 		}
 	}
 	return triggeredRun{
 		agentKey:    first.agentKey,
-		title:       fmt.Sprintf("合并触发 · 全部 · %d 条", len(items)),
+		title:       fmt.Sprintf("Combined triggers · all tasks · %d events", len(items)),
 		message:     b.String(),
 		taskID:      first.taskID,
 		mergeable:   true,
@@ -876,7 +876,7 @@ func (s *Server) runTriggeredRun(ctx context.Context, item triggeredRun) (err er
 		}
 	}()
 	// 【二开·P-LOG·O3】INFO 记会话启动（排障：触发器起来了没有）。
-	log.Printf("[trigger] 触发自定义 agent 启动：%s task#%d（%s）", item.agentKey, item.taskID, firstLine(item.title, 40))
+	log.Printf("[trigger] starting custom agent %s task#%d (%s)", item.agentKey, item.taskID, firstLine(item.title, 40))
 	pg := s.m.pg
 	c, err := pg.CreateConversation(item.agentKey, firstLine(item.title, 60), nil)
 	if err != nil {
@@ -918,14 +918,14 @@ func (s *Server) preAgentTaskCreateMessages(ctx context.Context, t *Task, agentK
 				messages := make([]string, 0, len(triggers))
 				for _, tr := range triggers {
 					if tr.Enabled && tr.OnTaskCreate {
-						messages = append(messages, tr.TaskCreateMessage+"\n\n【本次由任务创建触发】")
+						messages = append(messages, tr.TaskCreateMessage+"\n\n[Triggered by task creation]")
 					}
 				}
 				return messages, nil
 			}
 		}
 		xlog.Oncef("pre-agent-trigger-"+t.ID, 5*time.Minute, xlog.LevelError,
-			"[executor] task %s 查询 on_task_create 失败: %v", t.ID, err)
+			"[executor] task %s failed to query on_task_create: %v", t.ID, err)
 		if sleepCtx(ctx, 800*time.Millisecond) {
 			return nil, context.Cause(ctx)
 		}
@@ -958,13 +958,13 @@ func (s *Server) runPreAgentConversation(ctx context.Context, t *Task) (bool, er
 		message.WriteString(msg)
 		message.WriteString("\n\n")
 	}
-	fmt.Fprintf(&message, "【首个意图执行协议】调用 list_intents(states=[\"proposed\",\"open\"])，核对意图 id=%d 且 payload.executor=%q；随后调用 claim_executor_intent(%d) 领取，确认 owner=exec:%s。只执行这一条意图并写回事实/发现，真正完成后给出结论。无匹配时直接结束，不修改状态，不启动或请求默认 Worker。", seed.ID, t.PreAgent, seed.ID, t.PreAgent)
+	fmt.Fprintf(&message, "[First-intent execution protocol] Call list_intents(states=[\"proposed\",\"open\"]) and verify intent id=%d and payload.executor=%q. Then call claim_executor_intent(%d) and confirm owner=exec:%s. Execute only this intent, record facts/findings, and provide a conclusion once actually complete. If no matching intent exists, stop without changing state or starting/requesting the default Worker.", seed.ID, t.PreAgent, seed.ID, t.PreAgent)
 	taskID, err := strconv.ParseInt(t.ID, 10, 64)
 	if err != nil {
 		return false, err
 	}
 	item := triggeredRun{
-		agentKey: a.Key, title: fmt.Sprintf("首个意图 · task#%d", taskID), message: message.String(),
+		agentKey: a.Key, title: fmt.Sprintf("First intent · task#%d", taskID), message: message.String(),
 		taskID: taskID, taskDesc: t.Description, taskGoal: t.Goal, executorKey: t.PreAgent,
 	}
 	runErr := s.runTriggeredRun(ctx, item)

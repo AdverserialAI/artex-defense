@@ -5,10 +5,10 @@ package db
 // update/cancel（软删）、产出锁。需要 ARTEX_PG_DSN（无则 skip）。
 
 import (
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
-	"encoding/json"
 )
 
 // setupReviewFlowExploration 建一个专用 exploration 并注册清理。

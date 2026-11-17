@@ -114,7 +114,7 @@ func TestAuthEndpointsRejectOversizedBody(t *testing.T) {
 		if reader.read > maxAuthJSONBodyBytes+1 {
 			t.Fatalf("handler read %d bytes for a %d byte cap", reader.read, maxAuthJSONBodyBytes)
 		}
-		if msg := assertSingleErrorResponse(t, rec); !strings.Contains(msg, "请求正文过大") {
+		if msg := assertSingleErrorResponse(t, rec); !strings.Contains(msg, "Request body is too large") {
 			t.Fatalf("error=%q", msg)
 		}
 	}

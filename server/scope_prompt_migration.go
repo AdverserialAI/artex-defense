@@ -67,11 +67,11 @@ func applyScopeAuthorizationRollback(pg *db.DB) error {
 	for _, key := range []string{"auto", "mainagent", "pentest", "planner", "review", "worker"} {
 		body := seeds[key]
 		if body == "" {
-			return fmt.Errorf("内置提示词种子缺失: %s", key)
+			return fmt.Errorf("Missing built-in prompt seed: %s", key)
 		}
 		a, err := pg.GetAgentByKey(key)
 		if err != nil {
-			return fmt.Errorf("读取 %s Agent: %w", key, err)
+			return fmt.Errorf("Read %s Agent: %w", key, err)
 		}
 		if a == nil || !a.Builtin {
 			continue
@@ -85,7 +85,7 @@ func applyScopeAuthorizationRollback(pg *db.DB) error {
 	// updated_by='system' guard keeps user customizations intact.
 	a, err := pg.GetAgentByKey("vuln_dispatcher")
 	if err != nil {
-		return fmt.Errorf("读取 vuln_dispatcher Agent: %w", err)
+		return fmt.Errorf("Read vuln_dispatcher Agent: %w", err)
 	}
 	if a != nil {
 		if err := restoreSystemManagedPrompt(pg, a.ID, "vuln_dispatcher", agent.VulnDispatcherDefaultPrompt); err != nil {
@@ -102,12 +102,12 @@ func applyScopeAuthorizationRollback(pg *db.DB) error {
 func restoreScopeScenarioTemplates(pg *db.DB) error {
 	for nkey, body := range agent.PlannerDomainSeeds() {
 		if _, err := pg.Exec(`UPDATE planner_templates SET body=$1,updated_at=now() WHERE builtin AND nkey=$2 AND body<>$1`, body, nkey); err != nil {
-			return fmt.Errorf("恢复内置 Planner 模板 %s: %w", nkey, err)
+			return fmt.Errorf("Restore built-in Planner template %s: %w", nkey, err)
 		}
 	}
 	for _, seed := range agent.WorkerDomainSeeds() {
 		if _, err := pg.Exec(`UPDATE worker_templates SET body=$1,updated_at=now() WHERE builtin AND nkey=$2 AND body<>$1`, seed.Body, seed.NKey); err != nil {
-			return fmt.Errorf("恢复内置 Worker 模板 %s: %w", seed.NKey, err)
+			return fmt.Errorf("Restore built-in Worker template %s: %w", seed.NKey, err)
 		}
 	}
 	return nil
@@ -124,7 +124,7 @@ FROM agents a
 LEFT JOIN agent_prompts p ON p.id=a.current_prompt_id
 WHERE a.id=$1`, agentID).Scan(&current, &updatedBy)
 	if err != nil {
-		return fmt.Errorf("读取 %s 当前提示词: %w", key, err)
+		return fmt.Errorf("Read %s current prompt: %w", key, err)
 	}
 	if !current.Valid {
 		return nil // no prompt version yet; startup seeding handles fresh rows
@@ -136,7 +136,7 @@ WHERE a.id=$1`, agentID).Scan(&current, &updatedBy)
 		return nil
 	}
 	if _, err := pg.ResetPromptToDefault(agentID, body); err != nil {
-		return fmt.Errorf("恢复 %s 系统默认提示词: %w", key, err)
+		return fmt.Errorf("Restore %s system default prompt: %w", key, err)
 	}
 	return nil
 }
@@ -146,7 +146,7 @@ WHERE a.id=$1`, agentID).Scan(&current, &updatedBy)
 func restoreDispatcherConstraintMessage(pg *db.DB) error {
 	triggers, err := pg.ListTriggersFor("vuln_dispatcher")
 	if err != nil {
-		return fmt.Errorf("读取 vuln_dispatcher 触发器: %w", err)
+		return fmt.Errorf("Read vuln_dispatcher triggers: %w", err)
 	}
 	for _, trigger := range triggers {
 		if trigger.FindingMessage != vulnDispatcherFindingMessageUnrestricted {
@@ -154,7 +154,7 @@ func restoreDispatcherConstraintMessage(pg *db.DB) error {
 		}
 		trigger.FindingMessage = vulnDispatcherFindingMessage
 		if err := pg.UpdateTrigger(trigger); err != nil {
-			return fmt.Errorf("恢复 vuln_dispatcher 约束检查消息: %w", err)
+			return fmt.Errorf("Restore vuln_dispatcher constraint-check message: %w", err)
 		}
 	}
 	return nil

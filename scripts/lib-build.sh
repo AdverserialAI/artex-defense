@@ -5,7 +5,7 @@
 #
 # 用法（在调用方脚本内 source 后调用）：
 #   . ./scripts/lib-build.sh
-#   build_embedded "构建前端静态产物…" "编译内嵌单二进制…"
+#   build_embedded "Building static frontend…" "Compiling binary with embedded frontend…"
 # 两条 info 文案由参数传入——install.sh 与 update.sh 用词不同
 # （构建/编译 vs 重建/重新编译），须保持各自输出逐字不变。
 build_embedded() {

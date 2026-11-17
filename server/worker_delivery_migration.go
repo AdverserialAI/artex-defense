@@ -21,7 +21,7 @@ const workerReportFindingMarker = "\n- **确认漏洞 → report_finding"
 // A custom body without that anchor is left alone; an existing [投放] contract is
 // never duplicated. Existing task prompt snapshots are intentionally untouched.
 func injectWorkerDeliveryFactSpec(body string) string {
-	if strings.Contains(body, "[投放]") || !strings.Contains(body, workerReportFindingMarker) {
+	if strings.Contains(body, "[Deployment]") || strings.Contains(body, "[投放]") || !strings.Contains(body, workerReportFindingMarker) {
 		return body
 	}
 	return strings.Replace(body, workerReportFindingMarker, "\n"+agent.WorkerDeliveryFactSpec+workerReportFindingMarker, 1)

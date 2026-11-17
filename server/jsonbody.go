@@ -81,7 +81,7 @@ func readJSONBody(w http.ResponseWriter, r *http.Request, maxBytes int64) ([]byt
 func writeJSONBodyTooLarge(w http.ResponseWriter, err error) bool {
 	var tooLarge *http.MaxBytesError
 	if errors.As(err, &tooLarge) {
-		writeErr(w, http.StatusRequestEntityTooLarge, "请求正文过大")
+		writeErr(w, http.StatusRequestEntityTooLarge, "Request body is too large")
 		return true
 	}
 	return false
@@ -94,7 +94,7 @@ func writeJSONBodyError(w http.ResponseWriter, err error) {
 		return
 	}
 	if errors.Is(err, io.EOF) {
-		writeErr(w, http.StatusBadRequest, "请求正文为空")
+		writeErr(w, http.StatusBadRequest, "Request body is empty")
 		return
 	}
 	writeErr(w, http.StatusBadRequest, "invalid JSON: "+err.Error())

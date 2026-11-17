@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 一键部署：首次启动自动初始化数据库密码，之后始终复用 .env 与命名卷中的数据。
+# 一键部署：首次启动自动初始化数据库Password，之后始终复用 .env 与命名卷中的数据。
 # 默认构建当前源码，支持 --no-build 严格复用已有镜像，支持 --show-secrets 显式显示凭据。
 set -Eeuo pipefail
 
@@ -17,18 +17,18 @@ for arg in "$@"; do
     --no-build) BUILD=0 ;;
     --show-secrets) SHOW_SECRETS=1 ;;
     -h|--help)
-      echo "用法: $0 [--no-build] [--show-secrets]"
-      echo "  --no-build      禁止重新构建镜像，严格复用 ARTEX_TAG 指定的已有镜像"
-      echo "  --show-secrets  成功后显示数据库密码（默认不显示任何凭据）"
+      echo "Usage: $0 [--no-build] [--show-secrets]"
+      echo "  --no-build      Reuse the existing ARTEX_TAG image without rebuilding"
+      echo "  --show-secrets  Show database password on success (credentials hidden by default)"
       exit 0
       ;;
-    *) die "未知参数: $arg" ;;
+    *) die "Unknown argument: $arg" ;;
   esac
 done
 
-command -v docker >/dev/null 2>&1 || die "未找到 docker，请先安装 Docker。"
-docker compose version >/dev/null 2>&1 || die "未找到 docker compose 插件。"
-command -v curl >/dev/null 2>&1 || die "未找到 curl。"
+command -v docker >/dev/null 2>&1 || die "Docker was not found. Install Docker first."
+docker compose version >/dev/null 2>&1 || die "Docker Compose plugin was not found."
+command -v curl >/dev/null 2>&1 || die "curl was not found."
 
 # 只读取 Compose 使用的键，不 source .env，避免把部署变量当作 Shell 代码执行。
 dotenv_value() {
@@ -63,22 +63,22 @@ validate_existing_env() {
 
   case "$pg_password" in
     ""|artex|change-me-please|password|postgres)
-      die ".env 中 POSTGRES_PASSWORD 为空或仍是弱默认值。请先设置独立强密码；已有命名卷的真实密码不能被部署脚本擅自替换。"
+      die "POSTGRES_PASSWORD in .env is empty or still a weak default. Set a unique strong password first; the deployment script must not replace the real password of an existing named volume."
       ;;
   esac
-  # Compose 将密码直接插入 postgres:// DSN，非 URL 安全字符会改变连接串含义。
-  [[ "$pg_password" =~ ^[A-Za-z0-9._~-]+$ ]] || die "Docker 部署的 POSTGRES_PASSWORD 只能包含字母、数字、点、下划线、波浪线和连字符，避免 DSN/Compose 转义歧义。"
-  [[ "$pg_user" =~ ^[A-Za-z0-9_-]+$ ]] || die "POSTGRES_USER 含 Docker DSN 不支持的字符。"
-  [[ "$pg_db" =~ ^[A-Za-z0-9_-]+$ ]] || die "POSTGRES_DB 含 Docker DSN 不支持的字符。"
+  # Compose 将Password直接插入 postgres:// DSN，非 URL 安全字符会改变连接串含义。
+  [[ "$pg_password" =~ ^[A-Za-z0-9._~-]+$ ]] || die "Docker POSTGRES_PASSWORD may contain only letters, digits, dots, underscores, tildes, and hyphens to avoid ambiguous DSN/Compose escaping."
+  [[ "$pg_user" =~ ^[A-Za-z0-9_-]+$ ]] || die "POSTGRES_USER contains characters unsupported in the Docker DSN."
+  [[ "$pg_db" =~ ^[A-Za-z0-9_-]+$ ]] || die "POSTGRES_DB contains characters unsupported in the Docker DSN."
 }
 
 if [ ! -f .env ]; then
-  info "首次部署：生成 .env（独立随机数据库密码）"
-  command -v openssl >/dev/null 2>&1 || die "未找到 openssl，无法生成随机密码。"
+  info "First deployment: generating .env with a unique random database password"
+  command -v openssl >/dev/null 2>&1 || die "openssl was not found; cannot generate a random password."
   pg_pass="$(openssl rand -hex 32)"
   umask 077
   cat > .env <<EOF
-# 密码仅在首次部署时生成；修改它不会重置已有命名卷的数据库密码。
+# Password仅在首次部署时生成；修改它不会重置已有命名卷的数据库Password。
 # Docker DSN 使用 URL 安全字符，避免特殊字符被错误解析。
 POSTGRES_PASSWORD=${pg_pass}
 POSTGRES_USER=artex
@@ -87,39 +87,39 @@ POSTGRES_DB=artex
 ARTEX_TAG=
 EOF
   chmod 600 .env
-  ok "已生成 .env（权限 600）"
+  ok "Generated .env (permissions 600)"
 else
-  info "复用现有 .env 与数据库命名卷"
+  info "Reusing existing .env and database named volume"
   validate_existing_env
   chmod 600 .env
 fi
 
 tag="$(unquote "$(dotenv_value ARTEX_TAG)")"
 tag="${tag:-local}"
-info "镜像标签：${tag}"
+info "Image tag:${tag}"
 
 # 启动前先展开并校验 Compose 配置，避免容器启动后才暴露 DSN/变量错误。
 docker compose config --quiet
-info "拉取数据库基础镜像"
+info "Pulling database base image"
 docker compose pull postgres
 
 up_args=(-d)
 if [ "$BUILD" -eq 1 ]; then
-  info "从当前源码构建并启动（tag=${tag}）"
+  info "Building and starting from current source (tag=${tag})"
   up_args+=(--build)
 else
-  info "严格复用已有镜像启动（tag=${tag}，--no-build）"
+  info "Starting with existing image only (tag=${tag}, --no-build)"
   up_args+=(--no-build)
 fi
 
 if ! docker compose up "${up_args[@]}"; then
-  warn "docker compose up 失败，输出最近容器日志："
+  warn "docker compose up failed; showing recent container logs:"
   docker compose ps >&2 || true
   docker compose logs --no-color --tail 100 postgres artex >&2 || true
-  die "部署失败，请根据上方日志处理后重试。"
+  die "Deployment failed. Resolve the errors above and retry."
 fi
 
-info "等待后端健康检查和前端首页就绪"
+info "Waiting for backend health and frontend homepage readiness"
 healthy=0
 for _ in $(seq 1 36); do
   if curl -fsS --max-time 3 http://127.0.0.1:8787/api/health >/dev/null 2>&1 \
@@ -131,25 +131,25 @@ for _ in $(seq 1 36); do
 done
 
 if [ "$healthy" -ne 1 ]; then
-  warn "服务未在 180 秒内通过完整健康检查，输出容器状态和最近日志："
+  warn "Full health check did not pass within 180 seconds; showing container status and recent logs:"
   docker compose ps >&2 || true
   docker compose logs --no-color --tail 150 postgres artex >&2 || true
-  die "健康检查失败（后端 /api/health 或前端首页 /）。"
+  die "Health check failed (backend /api/health or frontend /)."
 fi
 
-ok "部署完成，后端健康检查与前端首页均通过"
+ok "Deployment complete; backend health and frontend homepage checks passed"
 echo ""
-echo "  访问地址:  http://<服务器IP>:8787/"
-echo "  首次使用:  打开页面注册管理员账号，并在「系统设置 → LLM」配置模型。"
-echo "  数据目录:  ./data（JWT 密钥 data/jwt.key 由服务自动管理并持久化）"
-echo "  数据库:    Docker 命名卷 pgdata"
+echo "  URL:  http://<server-IP>:8787/"
+echo "  First use: open the page to set up the administrator account, then configure a model in System → LLM."
+echo "  Data directory: ./data (JWT key data/jwt.key is managed and persisted automatically)"
+echo "  Database: Docker named volume pgdata"
 echo ""
 if [ "$SHOW_SECRETS" -eq 1 ]; then
-  warn "按 --show-secrets 要求显示数据库密码；请勿将此输出粘贴到公开日志。"
+  warn "Showing database password as requested by --show-secrets; do not paste this output into public logs."
   printf '  POSTGRES_PASSWORD=%s\n' "$(unquote "$(dotenv_value POSTGRES_PASSWORD)")"
 else
-  echo "  数据库密码保存在 .env（权限 600），默认不显示；如需查看请显式使用 --show-secrets。"
+  echo "  Database password is stored in .env (permissions 600), hidden by default. Explicitly use --show-secrets to display it."
 fi
 echo ""
-echo "停止:  docker compose down        （数据保留）"
-echo "更新:  修改 ARTEX_TAG 后重新运行 ./deploy.sh（默认重新构建当前源码）"
+echo "Stop:  docker compose down        (data retained)"
+echo "Update: change ARTEX_TAG and rerun ./deploy.sh (rebuilds current source by default)"

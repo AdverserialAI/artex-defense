@@ -64,7 +64,7 @@ func (d *DB) BuildEdgesFromFact(taskID, factID int64, payload map[string]any, ac
 		return
 	}
 	if !topologyInternalIPv4(t.SrcIP) {
-		log.Printf("[topology] fact %d 建边跳过：src_ip %s 非内网", factID, t.SrcIP)
+		log.Printf("[topology] fact %d edge skipped: src_ip %s is not internal", factID, t.SrcIP)
 		return
 	}
 	kind := t.Kind
@@ -80,11 +80,11 @@ func (d *DB) BuildEdgesFromFact(taskID, factID int64, payload map[string]any, ac
 	}
 	for _, dst := range t.DstIPs {
 		if dst == t.SrcIP {
-			log.Printf("[topology] fact %d 建边跳过：%s 自环", factID, dst)
+			log.Printf("[topology] fact %d edge skipped: %s self-loop", factID, dst)
 			continue
 		}
 		if !topologyInternalIPv4(dst) {
-			log.Printf("[topology] fact %d 建边跳过：dst_ip %s 非内网", factID, dst)
+			log.Printf("[topology] fact %d edge skipped: dst_ip %s is not internal", factID, dst)
 			continue
 		}
 		rel := TopologyRelationInput{
@@ -98,7 +98,7 @@ func (d *DB) BuildEdgesFromFact(taskID, factID int64, payload map[string]any, ac
 		// 成环检测（topologyWouldCycle，成环即报错→此处记日志跳过）、
 		// 节点 upsert（无游离节点）、(task_id,src_ip,dst_ip,kind) 冲突时刷新 label/证据。
 		if _, err := d.RecordTaskTopologyRelation(taskID, rel, actor); err != nil {
-			log.Printf("[topology] fact %d 建边 %s→%s 跳过: %v", factID, t.SrcIP, dst, err)
+			log.Printf("[topology] fact %d edge %s→%s skipped: %v", factID, t.SrcIP, dst, err)
 		}
 	}
 }
