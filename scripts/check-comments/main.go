@@ -32,7 +32,7 @@ const (
 var businessGoDirs = []string{
 	"cmd", "server", "agent", "db", "guard", "intercept", "notify",
 	"report", "evidence", "traffic", "xlog", "llmrec", "llmpool",
-	"mcphttp", "sidequestion", "selfupdate", "enrich",
+	"mcphttp", "sidequestion", "enrich",
 }
 
 // denyPhrases 是已确认过期的注释/文案短语；P0，按文件行号报告。

@@ -1,6 +1,6 @@
 // main.go：ARTEX 后端入口，组装 PostgreSQL 存储、探索引擎与 JSON HTTP API 并启动服务。
 // 主要函数/类型：
-//   - main / run：进程入口与主装配流程，run 返回退出码以配合自更新重启协议。
+//   - main / run：进程入口与主装配流程，run 返回进程退出码。
 //   - printBanner：打印启动横幅与版本/运行时信息。
 //   - shutdownContext：收到退出信号后构造带期限的关闭上下文。
 
@@ -25,7 +25,6 @@ import (
 
 	"artex/agent"
 	"artex/config"
-	"artex/selfupdate"
 	"artex/server"
 )
 
@@ -49,10 +48,7 @@ func printBanner(addr string) {
 		version, runtime.GOOS, runtime.GOARCH, runtime.Version(), addr)
 }
 
-// main only maps run's result onto the process exit code. The exit code is part
-// of the update protocol — the supervising start script reads it to decide
-// whether to relaunch us (see selfupdate.ExitRestart) — so the body has to live
-// in a function that can *return* rather than os.Exit past its own defers.
+// main maps run's return value onto the process exit code after cleanup.
 func main() {
 	os.Exit(run())
 }
@@ -74,16 +70,6 @@ func run() int {
 	// capture backend logs into the in-memory sink (still to stderr) so the /logs
 	// page can show a live log stream. Do this first, to catch startup logs too.
 	server.StartLogCapture()
-
-	// Self-update bootstrap: swap in a staged binary, or count a post-swap boot
-	// attempt and roll back if the new build keeps dying. Must run before we open
-	// the stores or bind a port — this may end with "exit and let the start script
-	// relaunch me", and there is no point paying for either first.
-	action, upState := selfupdate.Bootstrap()
-	server.SetBootUpdateState(upState)
-	if action == selfupdate.Restart {
-		return selfupdate.ExitRestart
-	}
 
 	// surface which config file the binary reads (absolute, so `go run`'s relative
 	// "config.json" — resolved against the CWD — is unambiguous).
@@ -108,12 +94,6 @@ func run() int {
 	}
 	defer mgr.Close()
 
-	// Surviving this long means a freshly swapped-in build actually works, so drop
-	// the upgrade marker and stop counting attempts. Until it fires, every boot
-	// increments the count and a build that keeps dying gets rolled back.
-	settle := time.AfterFunc(selfupdate.SettleDelay, selfupdate.Settle)
-	defer settle.Stop()
-
 	skillDir := config.SkillDir()
 	if abs, err := filepath.Abs(skillDir); err == nil {
 		skillDir = abs
@@ -133,22 +113,14 @@ func run() int {
 		}
 	}()
 
-	// Two ways out: a signal (normal stop → exit 0, the start script stops looping)
-	// or a staged update / rollback (→ exit 75, the script relaunches us and the
-	// bootstrap above installs the new build).
-	code := 0
-	select {
-	case <-ctx.Done():
-	case <-server.RestartRequested():
-		code = selfupdate.ExitRestart
-		shutdown(agent.AbortShutdown)
-	}
+	// Updates are installed by redeployment; shutdown only responds to cancellation.
+	<-ctx.Done()
 
 	log.Println("shutting down...")
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	_ = httpSrv.Shutdown(shutdownCtx)
-	return code
+	return 0
 }
 
 // shutdownContext deliberately does not derive from signalCtx. If it did, the
