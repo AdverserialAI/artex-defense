@@ -273,6 +273,7 @@ func seedPrompts(pg *db.DB) {
 		{"代码审计", "代码审计", false},
 	}
 	for _, sc := range catScenarios {
+		displayName := localizeScenarioName(sc.name)
 		var tplID, workerTplID int64
 		if tpl, err := pg.GetPlannerTemplateByNKey(sc.tplKey); err == nil && tpl != nil {
 			tplID = tpl.ID
@@ -281,9 +282,9 @@ func seedPrompts(pg *db.DB) {
 			workerTplID = tpl.ID
 		}
 		if inserted, err := pg.SeedTaskCategoryPresetIfEmpty(sc.name, sc.review, tplID, workerTplID, false, ""); err != nil {
-			log.Printf("[prompts] failed to seed scenario category %s: %v", sc.name, err)
+			log.Printf("[prompts] failed to seed scenario category %s: %v", displayName, err)
 		} else if inserted {
-			log.Printf("[tpl] inserted scenario category: %s (review=%v)", sc.name, sc.review)
+			log.Printf("[tpl] inserted scenario category: %s (review=%v)", displayName, sc.review)
 		}
 	}
 	upgradeExternalPentestReviewDefault(pg)
