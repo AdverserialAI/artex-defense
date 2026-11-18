@@ -252,6 +252,12 @@ var runtimeSecretRoot = "/run/adverserial/current"
 const runtimeBootstrapProxy = "http://llm-egress-proxy:8080"
 const attestedGatewayBaseURL = "http://attested-inference-gateway:8787/v1"
 
+// agentModelProxyOrigin is the model proxy that runs beside ARTEX in the same
+// confidential VM. The proxy holds the owner's provider key and adds it to each
+// request; ARTEX is given only a local token. A compromised ARTEX can use the
+// model through the proxy but cannot read or copy the provider key.
+const agentModelProxyOrigin = "http://model-proxy:8089"
+
 // configsFromBootstrap reads a guard-authored provider chain and its separate
 // key files. The measured runtime mounts this tree read-only. Key bytes never
 // enter Docker environment metadata or the ARTEX database.
@@ -291,12 +297,19 @@ func configsFromBootstrap(path string) ([]Config, error) {
 				return nil, fmt.Errorf("invalid attested inference gateway bootstrap")
 			}
 			proxy = ""
+		} else if provider.Transport == "agent-proxy" {
+			// Only the fixed sibling address, with any path the provider's API uses.
+			// The request goes straight to it: never through another proxy, never anywhere else.
+			if provider.Endpoint != "" || provider.Model == "adverserial/cyberseek" || !agentModelProxyURL(provider.BaseURL) {
+				return nil, fmt.Errorf("invalid agent model proxy bootstrap")
+			}
+			proxy = ""
 		} else if provider.Transport != "" {
 			return nil, fmt.Errorf("unsupported LLM bootstrap transport")
 		} else if provider.Model == "adverserial/cyberseek" {
 			return nil, fmt.Errorf("CyberSEEK requires the attested inference gateway")
 		}
-		if provider.BaseURL != "" && provider.Transport != "attested-gateway" {
+		if provider.BaseURL != "" && provider.Transport != "attested-gateway" && provider.Transport != "agent-proxy" {
 			parsed, err := url.Parse(provider.BaseURL)
 			if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
 				return nil, fmt.Errorf("LLM bootstrap requires a verified HTTPS endpoint")
@@ -329,6 +342,19 @@ func configsFromBootstrap(path string) ([]Config, error) {
 	// network. BYOK traffic can leave only through the sibling CONNECT proxy;
 	// CyberSEEK reaches only the internal ACK-compatible attested gateway.
 	return configs, nil
+}
+
+// agentModelProxyURL reports whether value is the fixed in-VM model proxy,
+// optionally followed by a plain path.
+func agentModelProxyURL(value string) bool {
+	parsed, err := url.Parse(value)
+	if err != nil || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" || parsed.Opaque != "" {
+		return false
+	}
+	if parsed.Scheme+"://"+parsed.Host != agentModelProxyOrigin {
+		return false
+	}
+	return parsed.Path == "" || (strings.HasPrefix(parsed.Path, "/") && !strings.Contains(parsed.Path, "..") && !strings.Contains(parsed.Path, "//"))
 }
 
 // bootstrapEgressProxy is the sibling CONNECT proxy the full measured runtime

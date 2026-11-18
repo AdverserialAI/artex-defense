@@ -98,6 +98,31 @@ A deployment whose ARTEX container has its own route to the Internet and no
 sibling egress proxy sets `ARTEX_LLM_BOOTSTRAP_EGRESS=direct` in its measured
 configuration. Otherwise provider traffic still goes through the proxy.
 
-The key file is readable by the ARTEX process, so a tool ARTEX runs can read it
-too. Keeping the key in a separate container that adds it to outgoing requests
-would close that; it is not done here.
+## Keeping the provider key out of ARTEX
+
+A key file ARTEX can read can also be read by any tool ARTEX runs, and by ARTEX
+itself if it were ever compromised. Hosted deployments therefore do not give
+ARTEX the provider key at all. They run a small model proxy beside ARTEX in the
+same confidential VM and point ARTEX at it:
+
+```json
+{
+  "version": 1,
+  "providers": [
+    {
+      "provider": "openai",
+      "model": "my-model",
+      "transport": "agent-proxy",
+      "base_url": "http://model-proxy:8089/v1",
+      "api_key_file": "/run/adverserial/current/llm/token"
+    }
+  ]
+}
+```
+
+With `"transport": "agent-proxy"` ARTEX accepts only the fixed address
+`http://model-proxy:8089` (plus the provider API's path) and sends requests
+straight to it. The file it reads holds a local token, not the provider key. The
+proxy holds the real key, adds it to each request, and sends requests only to
+the provider its owner configured. ARTEX can use the model; it cannot read,
+copy or redirect the key.

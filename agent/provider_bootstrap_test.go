@@ -229,3 +229,44 @@ func TestBootstrapFingerprintFollowsTheDocumentAndItsKeysWithoutRevealingThem(t 
 		}
 	}
 }
+
+func TestBootstrapAgentProxyKeepsTheProviderKeyOutOfARTEX(t *testing.T) {
+	root := bootstrapRoot(t)
+	token := filepath.Join(root, "token")
+	writeSecret(t, token, "local-token-abcdefghijklmnopqrstuvwxyz")
+	config := filepath.Join(root, "bootstrap.json")
+	load := func(provider string) ([]Config, error) {
+		writeSecret(t, config, `{"version":1,"providers":[`+provider+`]}`)
+		return configsFromBootstrap(config)
+	}
+	for _, good := range []string{
+		`"provider":"openai","model":"my-model","base_url":"http://model-proxy:8089/v1"`,
+		`"provider":"anthropic","model":"claude-sonnet-4-5","base_url":"http://model-proxy:8089"`,
+		`"provider":"openai-responses","model":"gpt-4o","base_url":"http://model-proxy:8089/openai/v1"`,
+	} {
+		configs, err := load(`{` + good + `,"transport":"agent-proxy","api_key_file":"` + token + `"}`)
+		if err != nil || len(configs) != 1 || configs[0].Proxy != "" || configs[0].APIKey != "local-token-abcdefghijklmnopqrstuvwxyz" {
+			t.Fatalf("agent proxy bootstrap rejected: %s: %v %#v", good, err, configs)
+		}
+	}
+	for _, bad := range []string{
+		`"provider":"openai","model":"m","base_url":"http://model-proxy:8089/v1","endpoint":"custom"`, // the proxy decides the endpoint, not ARTEX
+		`"provider":"openai","model":"m","base_url":"https://model-proxy:8089/v1"`,
+		`"provider":"openai","model":"m","base_url":"http://model-proxy:9999/v1"`,
+		`"provider":"openai","model":"m","base_url":"http://model-proxy.evil.example:8089/v1"`,
+		`"provider":"openai","model":"m","base_url":"http://evil.example/v1"`,
+		`"provider":"openai","model":"m","base_url":"http://user:pw@model-proxy:8089/v1"`,
+		`"provider":"openai","model":"m","base_url":"http://model-proxy:8089/v1?x=1"`,
+		`"provider":"openai","model":"m","base_url":"http://model-proxy:8089/../v1"`,
+		`"provider":"openai","model":"m","base_url":""`,
+		`"provider":"openai","model":"adverserial/cyberseek","base_url":"http://model-proxy:8089/v1"`, // managed access keeps its own gateway
+	} {
+		if _, err := load(`{` + bad + `,"transport":"agent-proxy","api_key_file":"` + token + `"}`); err == nil {
+			t.Fatalf("accepted an agent proxy bootstrap it must refuse: %s", bad)
+		}
+	}
+	// Without the transport, the in-VM address is still refused: plain HTTP is never an ordinary endpoint.
+	if _, err := load(`{"provider":"openai","model":"m","base_url":"http://model-proxy:8089/v1","api_key_file":"` + token + `"}`); err == nil {
+		t.Fatal("the proxy address must need its transport")
+	}
+}
