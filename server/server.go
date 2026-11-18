@@ -316,15 +316,8 @@ func New(ctx context.Context, m *Manager, skillDir string, dataDir string, keyDi
 	// mutable database profiles. This keeps SaaS credentials out of PostgreSQL
 	// and prevents a stale profile from overriding the attested deployment.
 	if os.Getenv("ARTEX_LLM_BOOTSTRAP_FILE") != "" {
-		if configs, ok := agent.ConfigsFromEnv(); ok {
-			if err := s.applyRuntimeLLMs(configs); err != nil {
-				log.Printf("[engine] runtime LLM bootstrap init failed — engine idle: %v", err)
-			} else {
-				log.Printf("[engine] %d LLM provider(s) configured from measured runtime bootstrap", len(configs))
-			}
-		} else {
-			log.Printf("[engine] runtime LLM bootstrap rejected — engine idle")
-		}
+		s.loadRuntimeLLM()
+		go s.watchRuntimeLLM()
 	} else if cfg, ok := s.loadLLMConfig(); ok {
 		if err := s.applyLLM(cfg); err != nil {
 			log.Printf("[engine] saved LLM config init failed — engine idle: %v", err)
@@ -605,6 +598,57 @@ func (s *Server) applyRuntimeLLMs(configs []agent.Config) error {
 		provider = llmpool.New(members, nil)
 	}
 	return s.installLLM(primary, direct, provider)
+}
+
+// loadRuntimeLLM applies the measured-runtime provider bootstrap as it is now.
+// With no provider connected yet, or an invalid document, the engine is idle.
+func (s *Server) loadRuntimeLLM() {
+	configs, ok := agent.ConfigsFromEnv()
+	switch {
+	case !ok:
+		s.uninstallLLM()
+		log.Printf("[engine] runtime LLM bootstrap rejected — engine idle")
+	case len(configs) == 0:
+		s.uninstallLLM()
+		log.Printf("[engine] no model provider connected yet — engine idle until the owner connects one")
+	default:
+		if err := s.applyRuntimeLLMs(configs); err != nil {
+			s.uninstallLLM()
+			log.Printf("[engine] runtime LLM bootstrap init failed — engine idle: %v", err)
+		} else {
+			log.Printf("[engine] %d LLM provider(s) configured from measured runtime bootstrap", len(configs))
+		}
+	}
+}
+
+// watchRuntimeLLM re-applies the bootstrap when its owner connects, replaces or
+// removes a model, without a restart. The document is written outside ARTEX (by
+// the deployment's front door, inside the same confidential VM) and is read-only
+// here; ARTEX only notices that it changed.
+func (s *Server) watchRuntimeLLM() {
+	last := agent.BootstrapFingerprint()
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+	for range ticker.C {
+		current := agent.BootstrapFingerprint()
+		if current == last {
+			continue
+		}
+		last = current
+		s.loadRuntimeLLM()
+	}
+}
+
+// uninstallLLM takes the engine back to idle. Tasks already running keep the
+// provider they started with; nothing new starts until a provider is applied.
+func (s *Server) uninstallLLM() {
+	s.cfgMu.Lock()
+	wasOn := s.llmOn
+	s.llmOn = false
+	s.cfgMu.Unlock()
+	if wasOn {
+		s.invalidateTaskAgents()
+	}
 }
 
 func (s *Server) installLLM(cfg agent.Config, direct, prov llm.Provider) error {

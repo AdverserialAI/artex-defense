@@ -58,3 +58,46 @@ TLS to authenticate requests. Do not describe an external-provider key as
 literally never leaving the TEE. The accurate guarantee is that it is never
 stored in the public portal, its database, Docker environment metadata, ARTEX
 PostgreSQL profiles, or application logs.
+
+## Connecting a model after the deployment exists
+
+A hosted deployment usually starts before its owner has given it a model. Three
+additions cover that case:
+
+- **Waiting is a valid state.** A bootstrap with an empty provider list is
+  accepted. ARTEX stays idle, the ordinary profile endpoints stay locked, and no
+  environment key is used as a fallback.
+- **Changes are picked up without a restart.** ARTEX re-reads the bootstrap when
+  the document or a key file it names changes (checked every five seconds). The
+  document is written by the deployment's front door inside the same
+  confidential VM, on a page only the owner can reach; ARTEX has it read-only.
+  Removing the provider takes the engine back to idle.
+- **Compatible endpoints.** A provider marked `"endpoint": "custom"` may use any
+  public HTTPS `base_url`, for a self-hosted or third-party OpenAI- or
+  Anthropic-compatible service. Plain HTTP, addresses with credentials or a
+  query, `localhost`, private, link-local and metadata addresses, and bare
+  container names are refused. Without the mark, only the provider's own host is
+  accepted, as before.
+
+```json
+{
+  "version": 1,
+  "providers": [
+    {
+      "provider": "openai",
+      "model": "my-model",
+      "endpoint": "custom",
+      "base_url": "https://llm.example.com/v1",
+      "api_key_file": "/run/adverserial/current/llm/key-openai"
+    }
+  ]
+}
+```
+
+A deployment whose ARTEX container has its own route to the Internet and no
+sibling egress proxy sets `ARTEX_LLM_BOOTSTRAP_EGRESS=direct` in its measured
+configuration. Otherwise provider traffic still goes through the proxy.
+
+The key file is readable by the ARTEX process, so a tool ARTEX runs can read it
+too. Keeping the key in a separate container that adds it to outgoing requests
+would close that; it is not done here.

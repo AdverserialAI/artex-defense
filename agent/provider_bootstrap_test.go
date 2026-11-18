@@ -114,3 +114,118 @@ func TestInvalidBootstrapDoesNotFallBackToEnvironmentKey(t *testing.T) {
 		t.Fatal("invalid measured-runtime bootstrap must fail closed")
 	}
 }
+
+func bootstrapRoot(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	old := runtimeSecretRoot
+	runtimeSecretRoot = root
+	t.Cleanup(func() { runtimeSecretRoot = old })
+	return root
+}
+
+func writeSecret(t *testing.T, path, value string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(value), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestBootstrapWithNoProviderYetIsValidAndIdle(t *testing.T) {
+	root := bootstrapRoot(t)
+	config := filepath.Join(root, "bootstrap.json")
+	writeSecret(t, config, `{"version":1,"providers":[]}`)
+	configs, err := configsFromBootstrap(config)
+	if err != nil || len(configs) != 0 {
+		t.Fatalf("an empty provider list must be accepted as waiting: %v %d", err, len(configs))
+	}
+	t.Setenv("ARTEX_LLM_BOOTSTRAP_FILE", config)
+	t.Setenv("ANTHROPIC_API_KEY", "ant-must-never-be-used-as-a-fallback-0000")
+	if fromEnv, ok := ConfigsFromEnv(); !ok || len(fromEnv) != 0 {
+		t.Fatalf("waiting bootstrap must not fall back to an environment key: %v %d", ok, len(fromEnv))
+	}
+}
+
+func TestBootstrapCustomEndpointMustBePublicHTTPS(t *testing.T) {
+	root := bootstrapRoot(t)
+	key := filepath.Join(root, "key")
+	writeSecret(t, key, "sk-abcdefghijklmnopqrstuvwxyz1234567890")
+	config := filepath.Join(root, "bootstrap.json")
+	load := func(provider string) ([]Config, error) {
+		writeSecret(t, config, `{"version":1,"providers":[`+provider+`]}`)
+		return configsFromBootstrap(config)
+	}
+	t.Setenv("ARTEX_LLM_BOOTSTRAP_EGRESS", "direct")
+	configs, err := load(`{"provider":"openai","model":"my-model","endpoint":"custom","base_url":"https://llm.example.com/v1","api_key_file":"` + key + `"}`)
+	if err != nil || len(configs) != 1 || configs[0].BaseURL != "https://llm.example.com/v1" || configs[0].Proxy != "" {
+		t.Fatalf("custom public HTTPS endpoint rejected: %v %#v", err, configs)
+	}
+	for _, bad := range []string{
+		`"endpoint":"custom","base_url":"http://llm.example.com/v1"`, // not HTTPS
+		`"endpoint":"custom","base_url":"https://localhost/v1"`,      // this machine
+		`"endpoint":"custom","base_url":"https://127.0.0.1/v1"`,
+		`"endpoint":"custom","base_url":"https://169.254.169.254/v1"`, // the cloud metadata service
+		`"endpoint":"custom","base_url":"https://metadata.google.internal/v1"`,
+		`"endpoint":"custom","base_url":"https://10.0.0.5/v1"`, // a private neighbour
+		`"endpoint":"custom","base_url":"https://[::1]/v1"`,
+		`"endpoint":"custom","base_url":"https://gateway/v1"`,                 // a bare container name
+		`"endpoint":"custom","base_url":"https://user:pw@llm.example.com/v1"`, // credentials in the address
+		`"endpoint":"custom","base_url":"https://llm.example.com/v1?key=x"`,
+		`"endpoint":"custom"`, // custom without an address
+		`"endpoint":"anything-else","base_url":"https://llm.example.com/v1"`,
+		`"base_url":"https://llm.example.com/v1"`, // not marked custom: only the provider's own host
+		`"endpoint":"custom","transport":"attested-gateway","model":"adverserial/cyberseek","base_url":"http://attested-inference-gateway:8787/v1"`,
+	} {
+		if _, err := load(`{"provider":"openai","model":"my-model",` + bad + `,"api_key_file":"` + key + `"}`); err == nil {
+			t.Fatalf("accepted an endpoint it must refuse: %s", bad)
+		}
+	}
+}
+
+func TestBootstrapEgressIsTheProxyUnlessTheDeploymentSaysDirect(t *testing.T) {
+	root := bootstrapRoot(t)
+	key := filepath.Join(root, "key")
+	writeSecret(t, key, "ant-abcdefghijklmnopqrstuvwxyz1234567890")
+	config := filepath.Join(root, "bootstrap.json")
+	writeSecret(t, config, `{"version":1,"providers":[{"provider":"anthropic","api_key_file":"`+key+`"}]}`)
+	configs, err := configsFromBootstrap(config)
+	if err != nil || configs[0].Proxy != runtimeBootstrapProxy {
+		t.Fatalf("default egress must be the sibling proxy: %v %#v", err, configs)
+	}
+	t.Setenv("ARTEX_LLM_BOOTSTRAP_EGRESS", "direct")
+	configs, err = configsFromBootstrap(config)
+	if err != nil || configs[0].Proxy != "" {
+		t.Fatalf("direct egress must use no proxy: %v %#v", err, configs)
+	}
+}
+
+func TestBootstrapFingerprintFollowsTheDocumentAndItsKeysWithoutRevealingThem(t *testing.T) {
+	if BootstrapFingerprint() != "" {
+		t.Fatal("no bootstrap configured must give an empty fingerprint")
+	}
+	root := bootstrapRoot(t)
+	key := filepath.Join(root, "key")
+	config := filepath.Join(root, "bootstrap.json")
+	t.Setenv("ARTEX_LLM_BOOTSTRAP_FILE", config)
+	if BootstrapFingerprint() != "unreadable" {
+		t.Fatal("a missing document must be reported as unreadable")
+	}
+	writeSecret(t, config, `{"version":1,"providers":[]}`)
+	waiting := BootstrapFingerprint()
+	writeSecret(t, key, "sk-abcdefghijklmnopqrstuvwxyz1234567890")
+	writeSecret(t, config, `{"version":1,"providers":[{"provider":"openai","api_key_file":"`+key+`"}]}`)
+	connected := BootstrapFingerprint()
+	writeSecret(t, key, "sk-zyxwvutsrqponmlkjihgfedcba0987654321")
+	replaced := BootstrapFingerprint()
+	if waiting == connected || connected == replaced || waiting == replaced || len(connected) != 64 {
+		t.Fatalf("fingerprint did not follow the changes: %q %q %q", waiting, connected, replaced)
+	}
+	if connected == BootstrapFingerprint() || replaced != BootstrapFingerprint() {
+		t.Fatal("fingerprint must be stable while nothing changes")
+	}
+	for _, secret := range []string{"sk-abcdefghijklmnopqrstuvwxyz1234567890", "sk-zyxwvutsrqponmlkjihgfedcba0987654321"} {
+		if replaced == secret || connected == secret {
+			t.Fatal("fingerprint must not be the key")
+		}
+	}
+}

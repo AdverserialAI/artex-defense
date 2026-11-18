@@ -31,6 +31,9 @@ import (
 	"time"
 
 	"artex/llmrec"
+	"crypto/sha256"
+	"encoding/hex"
+	"net"
 	"norma/agentcore"
 	"norma/compaction"
 	"norma/llm"
@@ -233,6 +236,10 @@ type bootstrapConfig struct {
 	BaseURL    string `json:"base_url,omitempty"`
 	APIKeyFile string `json:"api_key_file"`
 	Transport  string `json:"transport,omitempty"`
+	// Endpoint is "" for the provider's own API, or "custom" for an owner-chosen
+	// compatible HTTPS endpoint (a self-hosted or third-party OpenAI- or
+	// Anthropic-compatible service). A custom endpoint must give a base_url.
+	Endpoint string `json:"endpoint,omitempty"`
 }
 
 type bootstrapDocument struct {
@@ -256,7 +263,10 @@ func configsFromBootstrap(path string) ([]Config, error) {
 	decoder := json.NewDecoder(bytes.NewReader(document))
 	decoder.DisallowUnknownFields()
 	var boot bootstrapDocument
-	if err := decoder.Decode(&boot); err != nil || boot.Version != 1 || len(boot.Providers) == 0 || len(boot.Providers) > 2 {
+	// An empty provider list is valid: the deployment exists but its owner has not
+	// connected a model yet. ARTEX stays idle and picks the provider up when the
+	// document changes (see BootstrapFingerprint).
+	if err := decoder.Decode(&boot); err != nil || boot.Version != 1 || len(boot.Providers) > 2 {
 		return nil, fmt.Errorf("invalid LLM bootstrap")
 	}
 	if decoder.Decode(&struct{}{}) != io.EOF {
@@ -272,7 +282,10 @@ func configsFromBootstrap(path string) ([]Config, error) {
 			return nil, fmt.Errorf("duplicate LLM bootstrap provider")
 		}
 		seen[provider.Provider] = true
-		proxy := runtimeBootstrapProxy
+		proxy := bootstrapEgressProxy()
+		if provider.Endpoint != "" && (provider.Endpoint != "custom" || provider.Transport != "" || provider.BaseURL == "") {
+			return nil, fmt.Errorf("unsupported LLM bootstrap endpoint")
+		}
 		if provider.Transport == "attested-gateway" {
 			if provider.Provider != "openai" || provider.Model != "adverserial/cyberseek" || provider.BaseURL != attestedGatewayBaseURL {
 				return nil, fmt.Errorf("invalid attested inference gateway bootstrap")
@@ -288,12 +301,18 @@ func configsFromBootstrap(path string) ([]Config, error) {
 			if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
 				return nil, fmt.Errorf("LLM bootstrap requires a verified HTTPS endpoint")
 			}
-			expectedHost := "api.anthropic.com"
-			if provider.Provider == "openai" || provider.Provider == "openai-responses" {
-				expectedHost = "api.openai.com"
-			}
-			if parsed.Hostname() != expectedHost || (parsed.Port() != "" && parsed.Port() != "443") {
-				return nil, fmt.Errorf("LLM bootstrap endpoint is not approved for provider")
+			if provider.Endpoint == "custom" {
+				if !publicEndpointHost(parsed.Hostname()) {
+					return nil, fmt.Errorf("LLM bootstrap custom endpoint must be a public host")
+				}
+			} else {
+				expectedHost := "api.anthropic.com"
+				if provider.Provider == "openai" || provider.Provider == "openai-responses" {
+					expectedHost = "api.openai.com"
+				}
+				if parsed.Hostname() != expectedHost || (parsed.Port() != "" && parsed.Port() != "443") {
+					return nil, fmt.Errorf("LLM bootstrap endpoint is not approved for provider")
+				}
 			}
 		}
 		key, err := readRuntimeSecret(provider.APIKeyFile, 4096)
@@ -310,6 +329,71 @@ func configsFromBootstrap(path string) ([]Config, error) {
 	// network. BYOK traffic can leave only through the sibling CONNECT proxy;
 	// CyberSEEK reaches only the internal ACK-compatible attested gateway.
 	return configs, nil
+}
+
+// bootstrapEgressProxy is the sibling CONNECT proxy the full measured runtime
+// forces provider traffic through. A deployment whose ARTEX container has its
+// own route to the Internet, and no such proxy, sets ARTEX_LLM_BOOTSTRAP_EGRESS
+// to "direct" in its measured configuration.
+func bootstrapEgressProxy() string {
+	if strings.TrimSpace(os.Getenv("ARTEX_LLM_BOOTSTRAP_EGRESS")) == "direct" {
+		return ""
+	}
+	return runtimeBootstrapProxy
+}
+
+// publicEndpointHost refuses names and addresses that can only mean "this
+// machine" or "this private network": a custom model endpoint is a service on
+// the Internet, never the metadata service or a neighbour.
+func publicEndpointHost(host string) bool {
+	host = strings.ToLower(strings.TrimSuffix(host, "."))
+	if host == "" || host == "localhost" || !strings.Contains(host, ".") && net.ParseIP(host) == nil {
+		return false
+	}
+	for _, suffix := range []string{".localhost", ".local", ".internal", ".lan", ".home.arpa"} {
+		if strings.HasSuffix(host, suffix) {
+			return false
+		}
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() ||
+			ip.IsUnspecified() || ip.IsMulticast() || ip.IsInterfaceLocalMulticast() {
+			return false
+		}
+		if v4 := ip.To4(); v4 != nil && v4[0] == 100 && v4[1]&0xc0 == 64 { // 100.64.0.0/10, carrier-grade NAT
+			return false
+		}
+	}
+	return true
+}
+
+// BootstrapFingerprint identifies the current provider bootstrap: the document
+// and every key file it names. It changes whenever any of them changes, so a
+// running server can tell that its owner connected, replaced or removed a model.
+// It returns "" when no bootstrap is configured and "unreadable" when it cannot
+// be read; it never contains key material.
+func BootstrapFingerprint() string {
+	path := strings.TrimSpace(os.Getenv("ARTEX_LLM_BOOTSTRAP_FILE"))
+	if path == "" {
+		return ""
+	}
+	document, err := readRuntimeSecret(path, 8192)
+	if err != nil {
+		return "unreadable"
+	}
+	digest := sha256.New()
+	digest.Write(document)
+	var boot bootstrapDocument
+	if json.Unmarshal(document, &boot) == nil {
+		for _, provider := range boot.Providers {
+			key, err := readRuntimeSecret(provider.APIKeyFile, 4096)
+			digest.Write([]byte{0})
+			if err == nil {
+				digest.Write(key)
+			}
+		}
+	}
+	return hex.EncodeToString(digest.Sum(nil))
 }
 
 func readRuntimeSecret(path string, maximum int64) ([]byte, error) {
