@@ -100,6 +100,22 @@ func TestAttestationQuoteIncludesFullGCPAttestation(t *testing.T) {
 	}
 }
 
+func TestAttestationQuoteFailsClosedWhenRuntimeInfoIsUnavailable(t *testing.T) {
+	fakeDstack(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/Info" {
+			http.Error(w, "unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		t.Errorf("quote endpoint continued to %q without verified runtime metadata", r.URL.Path)
+	})
+	request := httptest.NewRequest(http.MethodGet, "/attestation?reportData=abcd", nil)
+	response := httptest.NewRecorder()
+	(&Server{}).attestationQuote(response, request)
+	if response.Code != http.StatusBadGateway {
+		t.Fatalf("expected HTTP 502, got %d: %s", response.Code, response.Body.String())
+	}
+}
+
 type QuoteEvidenceForTest struct {
 	Quote       string `json:"quote"`
 	Attestation string `json:"attestation"`
@@ -115,5 +131,16 @@ func TestAttestationInfoSurfacesGuestErrors(t *testing.T) {
 	(&Server{}).attestationInfo(response, request)
 	if response.Code != http.StatusBadGateway {
 		t.Fatalf("expected HTTP 502, got %d", response.Code)
+	}
+}
+
+func TestAttestationEvidenceDisablesCachingAndSniffing(t *testing.T) {
+	response := httptest.NewRecorder()
+	writeAttestationEvidence(response, json.RawMessage(`{"quote":"deadbeef"}`))
+	if got := response.Header().Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("Cache-Control = %q", got)
+	}
+	if got := response.Header().Get("X-Content-Type-Options"); got != "nosniff" {
+		t.Fatalf("X-Content-Type-Options = %q", got)
 	}
 }

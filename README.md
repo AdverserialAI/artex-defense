@@ -29,6 +29,7 @@ The legacy ARTEX runtime remains for compatibility, but it is not the defense ex
 - Authenticated web review UI and PR-ready exports; human approval is separate from validation
 - English menus, defaults, generated reports, notifications, validation errors, and operational logs
 - Confidential model provisioning through a fixed in-VM proxy without exposing the external provider API key
+- Browser-verifiable confidential-computing attestation with fresh nonce binding and measured Compose evidence
 - Removal of the legacy upstream binary downloader and executable self-replacement path
 - Signed, digest-pinned Linux AMD64 releases with SBOM and provenance attestations
 
@@ -166,6 +167,22 @@ When managed provisioning is active, the normal LLM settings menu is unavailable
 ARTEX can reload the owner-selected model without restarting. Invalid bootstrap files,
 unsafe permissions, unexpected proxy origins, and direct credential fallback stop the
 managed configuration instead of silently weakening it.
+
+## Confidential-computing attestation
+
+Open **System → Attestation** in the ARTEX Defense console to request fresh evidence
+from the dstack guest agent. The browser supplies a random nonce, verifies that the
+returned evidence is bound to that nonce, checks the measured application Compose
+hash, and sends the hardware evidence to the configured verifier outside the
+confidential VM. Google Confidential VM deployments include the full Intel TDX and
+Google vTPM attestation bundle and fail closed if runtime metadata or either required
+evidence source is unavailable.
+
+The page also exposes the measured image references and allows the complete evidence
+bundle to be downloaded for independent verification. Compare those image digests
+with the signed, digest-pinned ARTEX Defense release before admitting the runtime.
+See [Confidential-computing attestation](docs/CONFIDENTIAL-COMPUTING.md) for the trust
+boundary, deployment requirements, API endpoints, and verification procedure.
 
 ## Release and update policy
 

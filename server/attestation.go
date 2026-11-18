@@ -65,6 +65,7 @@ func dstackRPC(ctx context.Context, method string, payload []byte) (json.RawMess
 func writeAttestationEvidence(w http.ResponseWriter, evidence json.RawMessage) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
 	_, _ = w.Write(evidence)
 }
 
@@ -81,38 +82,44 @@ func (s *Server) attestationQuote(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, "reportData must be hexadecimal")
 		return
 	}
+	info, err := dstackRPC(r.Context(), "Info", []byte("{}"))
+	if err != nil {
+		writeErr(w, 502, err.Error())
+		return
+	}
+	var metadata struct {
+		CloudVendor string `json:"cloud_vendor"`
+	}
+	if err := json.Unmarshal(info, &metadata); err != nil {
+		writeErr(w, 502, "dstack Info returned malformed runtime metadata")
+		return
+	}
 	payload, _ := json.Marshal(map[string]string{"report_data": reportData})
 	evidence, err := dstackRPC(r.Context(), "GetQuote", payload)
 	if err != nil {
 		writeErr(w, 502, err.Error())
 		return
 	}
-	info, infoErr := dstackRPC(r.Context(), "Info", []byte("{}"))
-	if infoErr == nil {
-		var metadata struct {
-			CloudVendor string `json:"cloud_vendor"`
+	if metadata.CloudVendor == "Google" {
+		attestation, attestErr := dstackRPC(r.Context(), "Attest", payload)
+		if attestErr != nil {
+			writeErr(w, 502, attestErr.Error())
+			return
 		}
-		if json.Unmarshal(info, &metadata) == nil && metadata.CloudVendor == "Google" {
-			attestation, attestErr := dstackRPC(r.Context(), "Attest", payload)
-			if attestErr != nil {
-				writeErr(w, 502, attestErr.Error())
-				return
-			}
-			var full struct {
-				Attestation json.RawMessage `json:"attestation"`
-			}
-			if err := json.Unmarshal(attestation, &full); err != nil || len(full.Attestation) == 0 {
-				writeErr(w, 502, "dstack Attest returned no attestation evidence")
-				return
-			}
-			var fields map[string]json.RawMessage
-			if err := json.Unmarshal(evidence, &fields); err != nil {
-				writeErr(w, 502, err.Error())
-				return
-			}
-			fields["attestation"] = full.Attestation
-			evidence, _ = json.Marshal(fields)
+		var full struct {
+			Attestation json.RawMessage `json:"attestation"`
 		}
+		if err := json.Unmarshal(attestation, &full); err != nil || len(full.Attestation) == 0 {
+			writeErr(w, 502, "dstack Attest returned no attestation evidence")
+			return
+		}
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(evidence, &fields); err != nil {
+			writeErr(w, 502, err.Error())
+			return
+		}
+		fields["attestation"] = full.Attestation
+		evidence, _ = json.Marshal(fields)
 	}
 	writeAttestationEvidence(w, evidence)
 }

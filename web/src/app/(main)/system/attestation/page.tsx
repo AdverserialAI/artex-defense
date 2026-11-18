@@ -194,7 +194,7 @@ export default function AttestationPage() {
     const url = URL.createObjectURL(new Blob([JSON.stringify(evidence, null, 2)], { type: "application/json" }));
     const anchor = document.createElement("a");
     anchor.href = url;
-    anchor.download = `artex-attestation-${Date.now()}.json`;
+    anchor.download = `artex-defense-attestation-${Date.now()}.json`;
     anchor.click();
     URL.revokeObjectURL(url);
   }
@@ -219,8 +219,9 @@ export default function AttestationPage() {
             <ShieldCheckIcon className="size-6" /> Runtime attestation
           </h1>
           <p className="mt-1 max-w-3xl text-muted-foreground text-sm">
-            Generate fresh Intel TDX evidence, verify the hardware quote, and confirm that the attested Compose hash
-            describes this deployment. Verification runs in your browser, outside the confidential VM.
+            Generate fresh Intel TDX evidence for ARTEX Defense, verify the hardware quote, and confirm that the
+            attested Compose hash describes this deployment. Verification runs in your browser, outside the
+            confidential VM.
           </p>
         </div>
         <div className="flex gap-2">
