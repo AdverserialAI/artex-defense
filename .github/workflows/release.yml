@@ -107,6 +107,51 @@ jobs:
           [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
           cosign sign --yes "$IMAGE@$DIGEST"
 
+      - name: Create attestation release files
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          digest = os.environ["DIGEST"]
+          if not digest.startswith("sha256:") or len(digest) != 71:
+              raise SystemExit("invalid release digest")
+          image = f'{os.environ["IMAGE"]}@{digest}'
+          marker = '${ARTEX_DEFENSE_IMAGE:?set ARTEX_DEFENSE_IMAGE to a digest-pinned ARTEX Defense release image}'
+          compose = Path("docker-compose.phala.yml").read_text()
+          if compose.count(marker) != 1:
+              raise SystemExit("attested Compose image marker is missing or ambiguous")
+          Path("docker-compose.attested.yml").write_text(compose.replace(marker, image))
+
+          identity = (
+              f'https://github.com/{os.environ["GITHUB_REPOSITORY"]}/'
+              f'.github/workflows/release.yml@{os.environ["GITHUB_REF"]}'
+          )
+          manifest = {
+              "schema": "adverserial.agent-release/v1",
+              "product": "ARTEX Defense",
+              "version": os.environ["GITHUB_REF_NAME"],
+              "commit": os.environ["GITHUB_SHA"],
+              "image": image,
+              "platform": "linux/amd64",
+              "attestation": {
+                  "verifier_url": os.environ["VERIFIER_URL"],
+                  "dstack_socket": "/var/run/dstack.sock",
+                  "cosign_oidc_issuer": "https://token.actions.githubusercontent.com",
+                  "cosign_certificate_identity": identity,
+              },
+          }
+          Path("artex-defense-release.json").write_text(
+              json.dumps(manifest, indent=2, sort_keys=True) + "\n"
+          )
+          PY
+          POSTGRES_PASSWORD=release-validation docker compose \
+            -f docker-compose.attested.yml config --quiet
+          sha256sum artex-defense-release.json docker-compose.attested.yml > SHA256SUMS
+
       - name: Publish the release with its digest
         env:
           GH_TOKEN: ${{ github.token }}
@@ -122,6 +167,12 @@ jobs:
           | Commit | \`$GITHUB_SHA\` |
           | Digest | \`$DIGEST\` |
 
+          ## Attestation files
+
+          - \`docker-compose.attested.yml\` pins the exact ARTEX Defense image used in the measured application manifest.
+          - \`artex-defense-release.json\` records the image, commit, verifier, platform, and Cosign identity.
+          - \`SHA256SUMS\` authenticates both downloaded files after the release signature and workflow identity are checked.
+
           ## Verify it
 
           \`\`\`bash
@@ -133,4 +184,6 @@ jobs:
           A hosted agent runs this release if the application measurement in its hardware evidence
           was computed from a configuration that names this digest.
           NOTES
-          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --title "ARTEX Defense $GITHUB_REF_NAME" --notes-file notes.md --verify-tag
+          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
+            --title "ARTEX Defense $GITHUB_REF_NAME" --notes-file notes.md --verify-tag \
+            artex-defense-release.json docker-compose.attested.yml SHA256SUMS

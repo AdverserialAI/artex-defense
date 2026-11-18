@@ -9,7 +9,9 @@ git tag v0.1.6 && git push origin v0.1.6
 
 The `release` workflow then builds the image from that exact commit, pushes it to the registry
 hosted agents pull from, signs it, and creates a GitHub release that lists the image digest and
-the command to verify the signature. It refuses a tag that is not on `master`.
+the command to verify the signature. It also publishes an exact digest-pinned
+`docker-compose.attested.yml`, a machine-readable `artex-defense-release.json`, and
+`SHA256SUMS`. It refuses a tag that is not on `master`.
 
 ## What makes a release trustworthy
 
@@ -23,6 +25,9 @@ the command to verify the signature. It refuses a tag that is not on `master`.
   reveals the repository name, the workflow path and the tag, not the source code.
 - **Checked before use.** The agents' deployment repository keeps a list of approved releases and
   refuses to launch an agent with an image that is not on it.
+- **Measurement input included.** The release Compose asset names the exact signed image digest,
+  mounts the dstack socket, and can be used as the application manifest whose hash and image
+  references are exposed by the Attestation page.
 
 ## After a release
 

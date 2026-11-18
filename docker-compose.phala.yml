@@ -14,7 +14,7 @@ services:
       retries: 20
 
   artex:
-    image: ghcr.io/lordx64/artex-plus-plus@sha256:05a7894200fd668c2211da3d57018de14861dea4688db4b1e4f7ebf107c96215
+    image: ${ARTEX_DEFENSE_IMAGE:?set ARTEX_DEFENSE_IMAGE to a digest-pinned ARTEX Defense release image}
     cap_drop:
       - ALL
     cap_add:

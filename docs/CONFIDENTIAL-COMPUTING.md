@@ -33,9 +33,17 @@ The ARTEX Defense container needs access to the dstack guest-agent Unix socket:
 ```yaml
 services:
   artex-defense:
+    image: ${ARTEX_DEFENSE_IMAGE:?set ARTEX_DEFENSE_IMAGE to a digest-pinned ARTEX Defense release image}
     volumes:
       - /var/run/dstack.sock:/var/run/dstack.sock
 ```
+
+Set `ARTEX_DEFENSE_IMAGE` to the immutable `repository@sha256:...` value from the
+GitHub release. Each maintained release also attaches
+`docker-compose.attested.yml`, with that exact digest already inserted, and a matching
+`artex-defense-release.json` manifest and `SHA256SUMS` file. Use the release asset as
+the measured application Compose input rather than a Compose file containing a mutable
+tag.
 
 Set `DSTACK_SOCKET` only when the guest agent uses a different socket path. Release
 images compile `NEXT_PUBLIC_DSTACK_VERIFIER_URL` as

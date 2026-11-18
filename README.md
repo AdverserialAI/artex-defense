@@ -66,7 +66,8 @@ go build -o artex-defense ./cmd/artex-defense
 Tagged releases publish the complete ARTEX Defense application image. Use the
 digest-pinned reference and Cosign command from the
 [Releases](https://github.com/AdverserialAI/artex-defense/releases) page for a
-confidential deployment.
+confidential deployment. Each release also includes an exact digest-pinned attested
+Compose file, a machine-readable release manifest, and checksums for those files.
 
 The output directory must be outside the audited repository. A run does not create a Git branch or apply the patch to the source working tree.
 
