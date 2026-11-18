@@ -8,11 +8,11 @@ import packageJson from "../../package.json";
 const currentYear = new Date().getFullYear();
 
 export const APP_CONFIG = {
-  name: "artex",
+  name: "ARTEX Defense",
   version: packageJson.version,
-  copyright: `© ${currentYear}, artex.`,
+  copyright: `© ${currentYear}, ARTEX Defense.`,
   meta: {
-    title: "artex — Autonomous Pentest Console",
-    description: "Console for the LLM-driven autonomous penetration testing system",
+    title: "ARTEX Defense — Evidence-backed Remediation",
+    description: "Local security finding remediation with independently validated patches",
   },
 };

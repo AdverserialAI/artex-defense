@@ -1,4 +1,4 @@
-# Builds, signs and publishes one ARTEX Attack release image.
+# Builds, signs and publishes one ARTEX Defense release image.
 #
 # A release is a version tag on master, for example v0.1.6. Nothing else triggers this:
 # not a branch push, not a pull request, not a manual run. The image is pushed by digest to
@@ -23,9 +23,9 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  IMAGE: us-central1-docker.pkg.dev/adverserial-ack-poc/agents/artex
+  IMAGE: us-central1-docker.pkg.dev/adverserial-ack-poc/agents/artex-defense
   VERIFIER_URL: https://verify.adverserial.ai/verify
-  WORKLOAD_IDENTITY_PROVIDER: projects/711745269151/locations/global/workloadIdentityPools/github-releases/providers/artex-attack
+  WORKLOAD_IDENTITY_PROVIDER: projects/711745269151/locations/global/workloadIdentityPools/github-releases/providers/artex-defense
   PUBLISHER: artex-release-publisher@adverserial-ack-poc.iam.gserviceaccount.com
 
 jobs:
@@ -133,4 +133,4 @@ jobs:
           A hosted agent runs this release if the application measurement in its hardware evidence
           was computed from a configuration that names this digest.
           NOTES
-          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --title "ARTEX Attack $GITHUB_REF_NAME" --notes-file notes.md --verify-tag
+          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --title "ARTEX Defense $GITHUB_REF_NAME" --notes-file notes.md --verify-tag

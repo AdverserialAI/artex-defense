@@ -1,4 +1,4 @@
-# Releasing ARTEX Attack
+# Releasing ARTEX Defense
 
 A release is a version tag on `master`. Pushing the tag is the whole procedure:
 

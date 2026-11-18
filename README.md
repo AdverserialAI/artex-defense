@@ -1,5 +1,7 @@
 # ARTEX Defense
 
+<img src="web/public/logo.png" alt="ARTEX Defense logo" width="180" />
+
 ARTEX Defense turns local security findings into small, reviewable patches backed by independent validation evidence.
 
 **Security finding in → evidence-backed patch and validation results out.**
