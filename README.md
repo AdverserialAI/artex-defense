@@ -6,6 +6,11 @@ ARTEX Defense turns local security findings into small, reviewable patches backe
 
 **Security finding in → evidence-backed patch and validation results out.**
 
+This is the AdverserialAI-maintained defensive ARTEX distribution. It carries the
+English runtime and interface work from ARTEX Attack, while adding a separate,
+default-deny remediation engine and review console. Repository, release, and source
+links use `AdverserialAI/artex-defense`.
+
 The defense profile is default-deny for writes, network access, and execution. It does not autonomously exploit vulnerabilities, use a general-purpose shell, edit the audited source tree, commit, push, merge, deploy, or approve its own patches.
 
 The legacy ARTEX runtime remains for compatibility, but it is not the defense execution policy. Use the separate `artex-defense` CLI or the authenticated **Defense Review** console at `/function/defense`.
@@ -22,6 +27,10 @@ The legacy ARTEX runtime remains for compatibility, but it is not the defense ex
 - Non-root containers with networking disabled by default, scrubbed environments, dropped capabilities, command allowlists, timeouts, CPU/memory/PID limits, and output caps
 - Actual commands, exit codes, durations, logs, environment digest, artifacts, and rollback notes
 - Authenticated web review UI and PR-ready exports; human approval is separate from validation
+- English menus, defaults, generated reports, notifications, validation errors, and operational logs
+- Confidential model provisioning through a fixed in-VM proxy without exposing the external provider API key
+- Removal of the legacy upstream binary downloader and executable self-replacement path
+- Signed, digest-pinned Linux AMD64 releases with SBOM and provenance attestations
 
 Deterministic patch generation currently supports the included CommonJS recursive-merge prototype-pollution pattern. Other findings remain `needs_review` rather than receiving invented fixes.
 
@@ -30,6 +39,10 @@ Deterministic patch generation currently supports the included CommonJS recursiv
 Requires Go 1.26.11+, Node.js 22+ for the web UI, and Docker for independent validation. The validation image must already exist locally; the defense runner never pulls it implicitly.
 
 ```bash
+# Clone the maintained distribution.
+git clone https://github.com/AdverserialAI/artex-defense.git
+cd artex-defense
+
 # Pulling an image is a separate operator action, not a defense-run side effect.
 docker pull node:22-bookworm
 
@@ -48,6 +61,11 @@ go build -o artex-defense ./cmd/artex-defense
 # After independently reviewing the diff and command evidence:
 ./artex-defense review -bundle review-bundle/bundle.json -reviewer "your-name"
 ```
+
+Tagged releases publish the complete ARTEX Defense application image. Use the
+digest-pinned reference and Cosign command from the
+[Releases](https://github.com/AdverserialAI/artex-defense/releases) page for a
+confidential deployment.
 
 The output directory must be outside the audited repository. A run does not create a Git branch or apply the patch to the source working tree.
 
@@ -144,6 +162,21 @@ in-VM model proxy; the proxy holds and injects the provider API key. The applica
 therefore can use the configured model without being able to read or redirect the
 provider credential. See [Confidential SaaS LLM](docs/CONFIDENTIAL-SaaS-LLM.md).
 
+When managed provisioning is active, the normal LLM settings menu is unavailable and
+ARTEX can reload the owner-selected model without restarting. Invalid bootstrap files,
+unsafe permissions, unexpected proxy origins, and direct credential fallback stop the
+managed configuration instead of silently weakening it.
+
+## Release and update policy
+
+ARTEX Defense does not contact an upstream repository to download or replace its own
+executable. Updates are reviewed container releases. A `vX.Y.Z` tag on `master`
+builds the image, attaches SBOM and provenance data, signs the digest with a keyless
+workflow identity, and publishes the immutable reference in a GitHub release. See
+[Releasing ARTEX Defense](docs/RELEASING.md).
+
 ## License
 
-[AGPL v3](LICENSE), following the upstream ARTEX license. Third-party component obligations remain unchanged.
+[GNU AGPL v3](LICENSE), following the upstream ARTEX license. Network users must be
+offered the corresponding source as required by AGPL-3.0. Third-party component
+obligations remain unchanged.
