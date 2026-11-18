@@ -24,6 +24,7 @@ import {
   CommandList,
   CommandSeparator,
 } from "@/components/ui/command";
+import { useLlmManaged } from "@/hooks/use-llm-managed";
 import type { NavMainItem } from "@/navigation/sidebar/sidebar-items";
 import { sidebarItems } from "@/navigation/sidebar/sidebar-items";
 
@@ -87,6 +88,9 @@ function groupBy(items: SearchItem[]) {
 export function SearchDialog() {
   const [open, setOpen] = React.useState(false);
   const [query, setQuery] = React.useState("");
+  // On hosted agents the LLM settings are not offered, in search either.
+  const llmManaged = useLlmManaged();
+  const visible = (item: SearchItem) => !llmManaged || item.url !== "/system/llm";
   const router = useRouter();
 
   React.useEffect(() => {
@@ -155,7 +159,7 @@ export function SearchDialog() {
           <CommandInput placeholder="Search dashboards, users, and more…" value={query} onValueChange={setQuery} />
           <CommandList>
             <CommandEmpty>No results found.</CommandEmpty>
-            {query ? renderGroups(searchItems) : renderGroups(recommendations)}
+            {query ? renderGroups(searchItems.filter(visible)) : renderGroups(recommendations.filter(visible))}
           </CommandList>
         </Command>
       </CommandDialog>

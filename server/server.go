@@ -1176,6 +1176,10 @@ func (s *Server) stats(w http.ResponseWriter, r *http.Request) {
 	out := map[string]any{}
 	out["engine_mode"] = "idle"              // spec enum; overridden below when a task is active
 	out["llm_configured"] = s.engine.Ready() // is an LLM provider installed at all
+	// True when the deployment connects the model outside ARTEX (hosted agents): the
+	// LLM settings are locked here, so the interface hides them instead of offering
+	// a form that would be refused.
+	out["llm_managed"] = strings.TrimSpace(os.Getenv("ARTEX_LLM_BOOTSTRAP_FILE")) != ""
 	if tr := s.m.Traffic(); tr != nil {
 		c, _ := tr.Count()
 		out["traffic"] = c

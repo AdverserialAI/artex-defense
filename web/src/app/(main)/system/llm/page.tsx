@@ -35,6 +35,7 @@ import { Separator } from "@/components/ui/separator";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { useLlmManaged } from "@/hooks/use-llm-managed";
 import { api } from "@/lib/api";
 import type { LLMPoolMember, LLMPoolStatus, LLMProfile, LLMRetryOverride } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -172,8 +173,8 @@ function PoolSheet({
             <ZapIcon className="size-4" /> LLM rotation · failover
           </SheetTitle>
           <SheetDescription>
-            When enabled, Agents <b>without an assigned model</b> automatically fail over to the next profile when the current one is unavailable (out of balance / invalid key / rate limited /
-            service errors).
+            When enabled, Agents <b>without an assigned model</b> automatically fail over to the next profile when the
+            current one is unavailable (out of balance / invalid key / rate limited / service errors).
           </SheetDescription>
         </SheetHeader>
 
@@ -181,7 +182,9 @@ function PoolSheet({
           <div className="flex items-center justify-between gap-4 rounded-lg border p-3">
             <div className="grid gap-0.5">
               <Label className="text-sm">Enable rotation</Label>
-              <p className="text-muted-foreground text-xs">Off by default. When off, only the active profile is used and failures are final.</p>
+              <p className="text-muted-foreground text-xs">
+                Off by default. When off, only the active profile is used and failures are final.
+              </p>
             </div>
             <Switch
               checked={enabled}
@@ -197,8 +200,9 @@ function PoolSheet({
                 <div className="grid gap-0.5">
                   <Label className="text-sm">Also fail over for explicitly assigned models</Label>
                   <p className="text-muted-foreground text-xs">
-                    Off by default: an Agent or task with an assigned profile uses only that one and failures are final (no silent model swap).
-                    When enabled, failures of an assigned profile also fall back to the rotation chain below.
+                    Off by default: an Agent or task with an assigned profile uses only that one and failures are final
+                    (no silent model swap). When enabled, failures of an assigned profile also fall back to the rotation
+                    chain below.
                   </p>
                 </div>
                 <Switch
@@ -222,7 +226,8 @@ function PoolSheet({
                 </div>
                 {inChain.length < 2 && (
                   <p className="text-muted-foreground text-xs">
-                    Only {inChain.length} profiles are usable — rotation won't work until at least 2 profiles with API Keys participate in rotation.
+                    Only {inChain.length} profiles are usable — rotation won't work until at least 2 profiles with API
+                    Keys participate in rotation.
                   </p>
                 )}
                 {chain.map((m) => {
@@ -250,7 +255,9 @@ function PoolSheet({
                         {excluded && <Badge variant="outline">Not in rotation</Badge>}
                         <div className="ml-auto flex items-center gap-2">
                           {m.state === "tripped" && m.cooldown_secs > 0 && (
-                            <span className="text-muted-foreground text-xs">Cooldown {cooldownText(m.cooldown_secs)}</span>
+                            <span className="text-muted-foreground text-xs">
+                              Cooldown {cooldownText(m.cooldown_secs)}
+                            </span>
                           )}
                           {m.state === "degraded" && (
                             <span className="text-muted-foreground text-xs">{m.fails} consecutive failures</span>
@@ -289,9 +296,10 @@ function PoolSheet({
               </div>
 
               <div className="rounded-lg border border-dashed p-3 text-muted-foreground text-xs leading-relaxed">
-                The active profile is always first; the rest follow priority high to low (set per profile). A failing profile enters cooldown (60s → 5min →
-                30min) and is skipped during cooldown, then automatically resumes. Profiles whose context window cannot fit the current request are skipped. Agents and tasks with an assigned model
-                do not participate in rotation by default.
+                The active profile is always first; the rest follow priority high to low (set per profile). A failing
+                profile enters cooldown (60s → 5min → 30min) and is skipped during cooldown, then automatically resumes.
+                Profiles whose context window cannot fit the current request are skipped. Agents and tasks with an
+                assigned model do not participate in rotation by default.
               </div>
             </>
           )}
@@ -451,8 +459,11 @@ function ProfileSheet({
         session_header_key: sessionHeaderKey.trim(),
         retry,
       });
-      if (isNew) toast.success(`Created: ${name.trim()} (click \"Set active\" on the card to enable)`);
-      else toast.success(profile?.is_default ? "Saved — the active profile takes effect immediately, no restart needed" : "Saved");
+      if (isNew) toast.success(`Created: ${name.trim()} (click "Set active" on the card to enable)`);
+      else
+        toast.success(
+          profile?.is_default ? "Saved — the active profile takes effect immediately, no restart needed" : "Saved",
+        );
       onSaved(String(id));
       onOpenChange(false);
     } catch (e) {
@@ -479,7 +490,7 @@ function ProfileSheet({
           </SheetTitle>
           <SheetDescription>
             {isNew
-              ? "New profiles are not activated automatically — click \"Set active\" on the card to enable."
+              ? 'New profiles are not activated automatically — click "Set active" on the card to enable.'
               : "Click Save after editing; the active profile takes effect for all Agents immediately on save."}
           </SheetDescription>
         </SheetHeader>
@@ -593,9 +604,10 @@ function ProfileSheet({
               onChange={(e) => setSessionHeaderKey(e.target.value)}
             />
             <p className="text-muted-foreground text-xs">
-              With a header name set, every request carries this HTTP header, whose value is automatically the <b>current session id</b> (chat sessions like
-              conv-12, workers like exp3-worker-i87). Useful for gateways doing prompt caching /
-              sticky routing by session id: stable across turns of one session, distinct across sessions. Empty = not sent.
+              With a header name set, every request carries this HTTP header, whose value is automatically the{" "}
+              <b>current session id</b> (chat sessions like conv-12, workers like exp3-worker-i87). Useful for gateways
+              doing prompt caching / sticky routing by session id: stable across turns of one session, distinct across
+              sessions. Empty = not sent.
             </p>
           </div>
 
@@ -633,8 +645,8 @@ function ProfileSheet({
             </div>
           </div>
           <p className="-mt-2 text-muted-foreground text-xs">
-            Rate limit 0 = unlimited, shared across Agents. Context window is in K (thousand tokens): 0 = default 200K, max 1000 (i.e.
-            1M); setting it too high prevents compaction from triggering.
+            Rate limit 0 = unlimited, shared across Agents. Context window is in K (thousand tokens): 0 = default 200K,
+            max 1000 (i.e. 1M); setting it too high prevents compaction from triggering.
           </p>
 
           <div className="grid gap-3 rounded-lg border p-3">
@@ -644,7 +656,8 @@ function ProfileSheet({
                   Rotation priority
                 </Label>
                 <p className="text-muted-foreground text-xs">
-                  Higher values are tried first; the active profile is always first regardless of this value. Profiles with equal priority rotate the lead, naturally spreading quota usage.
+                  Higher values are tried first; the active profile is always first regardless of this value. Profiles
+                  with equal priority rotate the lead, naturally spreading quota usage.
                 </p>
               </div>
               <Input
@@ -659,8 +672,9 @@ function ProfileSheet({
               <div className="grid gap-0.5">
                 <Label className="text-sm">Not in rotation</Label>
                 <p className="text-muted-foreground text-xs">
-                  When enabled, this profile is never a failover target (Agents / tasks can still select it explicitly). Ideal for expensive profiles that should serve one specific Agent
-                  only and never be drained by others' failures.
+                  When enabled, this profile is never a failover target (Agents / tasks can still select it explicitly).
+                  Ideal for expensive profiles that should serve one specific Agent only and never be drained by others'
+                  failures.
                 </p>
               </div>
               <Switch checked={poolExclude} onCheckedChange={setPoolExclude} aria-label="Not in rotation" />
@@ -669,9 +683,9 @@ function ProfileSheet({
               <div className="grid gap-0.5">
                 <Label className="text-sm">Streaming output · streaming</Label>
                 <p className="text-muted-foreground text-xs">
-                  Enabled (default) uses streaming SSE with live progress and live token counts. Disabled uses true non-streaming (stream:false,
-                  one complete response) — a workaround for gateways with poor SSE implementations (empty frames / dropped thinking fields),
-                  at the cost of losing live progress.
+                  Enabled (default) uses streaming SSE with live progress and live token counts. Disabled uses true
+                  non-streaming (stream:false, one complete response) — a workaround for gateways with poor SSE
+                  implementations (empty frames / dropped thinking fields), at the cost of losing live progress.
                 </p>
               </div>
               <Switch checked={streaming} onCheckedChange={setStreaming} aria-label="Streaming output" />
@@ -685,9 +699,10 @@ function ProfileSheet({
                   Output cap · max tokens
                 </Label>
                 <p className="text-muted-foreground text-xs">
-                  Maximum tokens generated per response, sent with each request. 0 (default) = field not sent; the server's default applies.
-                  This is different from the "context window" above: that is the model's total capacity, used locally to compute the compaction threshold.
-                  Too small and reasoning models get truncated mid-thinking, producing no answer at all.
+                  Maximum tokens generated per response, sent with each request. 0 (default) = field not sent; the
+                  server's default applies. This is different from the "context window" above: that is the model's total
+                  capacity, used locally to compute the compaction threshold. Too small and reasoning models get
+                  truncated mid-thinking, producing no answer at all.
                 </p>
               </div>
               <Input
@@ -729,8 +744,9 @@ function ProfileSheet({
               <div className="grid gap-0.5">
                 <Label className="text-sm">Thinking toggle · thinking.type</Label>
                 <p className="text-muted-foreground text-xs">
-                  Controls whether the thinking field is sent. Not sent = field omitted (compatible with models that don't support it, e.g. MiniMax); disabled = sends
-                  disabled; enabled = sends enabled. Independent of the effort setting below.
+                  Controls whether the thinking field is sent. Not sent = field omitted (compatible with models that
+                  don't support it, e.g. MiniMax); disabled = sends disabled; enabled = sends enabled. Independent of
+                  the effort setting below.
                 </p>
               </div>
               <Select value={thinkingType} onValueChange={setThinkingType}>
@@ -750,8 +766,9 @@ function ProfileSheet({
               <div className="grid gap-0.5">
                 <Label className="text-sm">Thinking effort · reasoning_effort</Label>
                 <p className="text-muted-foreground text-xs">
-                  Independent effort level (OpenAI reasoning_effort / Anthropic output_config.effort). Some APIs have no thinking
-                  field and activate reasoning via effort alone, so this can be set independently without the thinking toggle.
+                  Independent effort level (OpenAI reasoning_effort / Anthropic output_config.effort). Some APIs have no
+                  thinking field and activate reasoning via effort alone, so this can be set independently without the
+                  thinking toggle.
                 </p>
               </div>
               <Select value={effort} onValueChange={setEffort}>
@@ -789,6 +806,24 @@ function ProfileSheet({
 }
 
 export default function LLMPage() {
+  // On hosted agents the model is connected on the agent's own page, outside ARTEX.
+  const llmManaged = useLlmManaged();
+  if (llmManaged) {
+    return (
+      <div className="mx-auto max-w-xl py-16 text-center">
+        <h1 className="font-semibold text-lg">Model access is managed outside ARTEX</h1>
+        <p className="mt-2 text-muted-foreground text-sm">
+          This agent&apos;s model is connected from the Agents portal, with the Connect model button on the agent&apos;s
+          card. The provider key is held by the agent&apos;s model proxy and is never given to ARTEX, so there is
+          nothing to configure here.
+        </p>
+      </div>
+    );
+  }
+  return <LLMSettings />;
+}
+
+function LLMSettings() {
   const [profiles, setProfiles] = React.useState<LLMProfile[]>([]);
   const [pool, setPool] = React.useState<LLMPoolStatus | null>(null);
   const [poolOpen, setPoolOpen] = React.useState(false);
@@ -861,7 +896,8 @@ export default function LLMPage() {
         <div>
           <h1 className="font-semibold text-xl tracking-tight">LLM</h1>
           <p className="text-muted-foreground text-sm">
-            Format / model / rate-limit profiles shared by all Agents. Click a card to edit; the star marks the active profile.
+            Format / model / rate-limit profiles shared by all Agents. Click a card to edit; the star marks the active
+            profile.
           </p>
         </div>
         <div className="flex items-center gap-2">

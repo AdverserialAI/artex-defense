@@ -1298,6 +1298,8 @@ export interface Stats {
   assets: number;
   engine_mode: EngineMode;
   llm_configured: boolean;
+  /** The model is connected outside ARTEX (hosted agents); LLM settings are hidden. */
+  llm_managed?: boolean;
   roe_enabled: boolean;
   findings_confirmed: number;
   active_task?: Partial<Task>;
